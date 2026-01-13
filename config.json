@@ -1,0 +1,18 @@
+{
+    "provider": "cloudflare",
+    "get_ip": {
+        "interface": "enp6s18",
+        "url": "https://ipv6.icanhazip.com"
+    },
+    "work_dir": "",
+    "provider_options": {
+        "api_token": "ou3ZYtKF0JR9bK1TDY6S9nsCadZ1fEd7Ci3bUUg5",
+        "zone_id": "0b7a20a170693acc0ac8b2cfc45d2181",
+        "proxied": false,
+        "ttl": 180,
+        "domain": {
+            "zone": "contactofen.site",
+            "record": "dev"
+        }
+    }
+}

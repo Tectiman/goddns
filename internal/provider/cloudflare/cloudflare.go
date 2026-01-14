@@ -15,7 +15,6 @@ import (
 	xnet "golang.org/x/net/proxy"
 
 	"netlink_example/internal/config"
-	"netlink_example/internal/log"
 )
 
 // CloudflareProvider implements Cloudflare-specific logic
@@ -86,13 +85,11 @@ func (p *CloudflareProvider) cfRequest(method string, endpoint string, data inte
 				return nil, fmt.Errorf("API request failed after %d retries: %w", defaultRetries, err)
 			}
 			delay := baseDelay * time.Duration(1<<attempt)
-			log.Info(false, "API request failed (attempt %d/%d): %v. Retrying in %v...", attempt+1, defaultRetries, err, delay)
 			time.Sleep(delay)
 			continue
 		}
 
 		if resp.StatusCode >= 500 && attempt < defaultRetries {
-			log.Info(false, "Server error (5xx) on attempt %d/%d. Retrying in %v...", attempt+1, defaultRetries, baseDelay*time.Duration(1<<attempt))
 			time.Sleep(baseDelay * time.Duration(1<<attempt))
 			continue
 		}
@@ -138,15 +135,14 @@ func (p *CloudflareProvider) GetZoneID(cfg config.Config) (string, error) {
 }
 
 // UpsertDNSRecord creates or updates the DNS record
-func (p *CloudflareProvider) UpsertDNSRecord(cfg config.Config, ip string, zoneID string) bool {
+func (p *CloudflareProvider) UpsertDNSRecord(cfg config.Config, ip string, zoneID string) (bool, error) {
 	fqdn := cfg.Cloudflare.Domain.Record + "." + cfg.Cloudflare.Domain.Zone
 	recordType := "AAAA"
 
 	searchURL := fmt.Sprintf("%s/%s/dns_records?type=%s&name=%s", zonesEndpoint, zoneID, recordType, fqdn)
 	resp, err := p.cfRequest("GET", searchURL, nil)
 	if err != nil {
-		log.Error(false, "Failed to search existing DNS record: %v", err)
-		return false
+		return false, fmt.Errorf("failed to search existing DNS record: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -164,13 +160,11 @@ func (p *CloudflareProvider) UpsertDNSRecord(cfg config.Config, ip string, zoneI
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&searchResult); err != nil {
-		log.Error(false, "Failed to decode DNS search response: %v", err)
-		return false
+		return false, fmt.Errorf("failed to decode DNS search response: %w", err)
 	}
 
 	if !searchResult.Success {
-		log.Error(false, "DNS search failed. API error: %s", searchResult.Errors[0].Message)
-		return false
+		return false, fmt.Errorf("DNS search failed. API error: %s", searchResult.Errors[0].Message)
 	}
 
 	newRecordData := map[string]interface{}{
@@ -186,23 +180,19 @@ func (p *CloudflareProvider) UpsertDNSRecord(cfg config.Config, ip string, zoneI
 	if len(searchResult.Result) > 0 {
 		existing := searchResult.Result[0]
 		if existing.Content == ip && existing.Proxied == cfg.Cloudflare.Proxied && existing.TTL == cfg.Cloudflare.TTL {
-			log.Info(false, "DNS record is already up-to-date. No API call needed.")
-			return true
+			return true, nil
 		}
 		recordID := existing.ID
 		method = "PUT"
 		apiEndpoint = fmt.Sprintf("%s/%s/dns_records/%s", zonesEndpoint, zoneID, recordID)
-		log.Info(false, "Existing record found (ID: %s). Content or configuration changed. Initiating update.", recordID)
 	} else {
 		method = "POST"
 		apiEndpoint = fmt.Sprintf("%s/%s/dns_records", zonesEndpoint, zoneID)
-		log.Info(false, "No existing record found. Initiating creation.")
 	}
 
 	resp, err = p.cfRequest(method, apiEndpoint, newRecordData)
 	if err != nil {
-		log.Error(false, "API call failed during %s: %v", method, err)
-		return false
+		return false, fmt.Errorf("API call failed during %s: %w", method, err)
 	}
 	defer resp.Body.Close()
 
@@ -215,16 +205,13 @@ func (p *CloudflareProvider) UpsertDNSRecord(cfg config.Config, ip string, zoneI
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&updateResult); err != nil {
-		log.Error(false, "Failed to decode API %s response: %v", method, err)
-		return false
+		return false, fmt.Errorf("failed to decode API %s response: %w", method, err)
 	}
 
 	if !updateResult.Success {
 		errMsg := updateResult.Errors[0].Message
-		log.Error(false, "Cloudflare API %s failed (Code %d): %s", method, updateResult.Errors[0].Code, errMsg)
-		return false
+		return false, fmt.Errorf("Cloudflare API %s failed (Code %d): %s", method, updateResult.Errors[0].Code, errMsg)
 	}
 
-	log.Info(false, "DNS record successfully %sed to IP %s. TTL: %ds.", strings.ToLower(method), ip, cfg.Cloudflare.TTL)
-	return true
+	return true, nil
 }

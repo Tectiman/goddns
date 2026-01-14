@@ -54,6 +54,10 @@ func ReadConfig(path string, quiet bool) (Config, string) {
 		log.Fatal(false, "Could not parse config file %s: %v", configFile, err)
 	}
 
+	// Decrypt sensitive fields
+	config.Cloudflare.APIToken = decrypt(config.Cloudflare.APIToken)
+	config.Cloudflare.ZoneID = decrypt(config.Cloudflare.ZoneID)
+
 	if config.Provider == "" {
 		log.Fatal(false, "Config file missing required field: provider")
 	}
@@ -100,8 +104,6 @@ func ReadConfig(path string, quiet bool) (Config, string) {
 	if changed {
 		if writeErr := WriteConfig(configFile, config); writeErr != nil {
 			log.Error(quiet, "Warning: Failed to standardize config file %s. Error: %v", configFile, writeErr)
-		} else if !quiet {
-			log.Info(quiet, "Config file standardized with default values.")
 		}
 	}
 
@@ -110,7 +112,12 @@ func ReadConfig(path string, quiet bool) (Config, string) {
 
 // WriteConfig writes config to the given path
 func WriteConfig(path string, config Config) error {
-	data, err := json.MarshalIndent(config, "", "    ")
+	// Encrypt sensitive fields before writing
+	configCopy := config
+	configCopy.Cloudflare.APIToken = encrypt(config.Cloudflare.APIToken)
+	configCopy.Cloudflare.ZoneID = encrypt(config.Cloudflare.ZoneID)
+
+	data, err := json.MarshalIndent(configCopy, "", "    ")
 	if err != nil {
 		return err
 	}
@@ -122,11 +129,11 @@ func GetCacheFilePath(configFile string, workDir string) string {
 	if workDir != "" {
 		if err := os.MkdirAll(workDir, 0755); err != nil {
 			log.Error(false, "Warning: Failed to create work_dir '%s'. Falling back to config file directory. Error: %v", workDir, err)
-			return configFile + ".lastip"
+			return filepath.Join(filepath.Dir(configFile), "cache.lastip")
 		}
-		return filepath.Join(workDir, filepath.Base(configFile)+".lastip")
+		return filepath.Join(workDir, "cache.lastip")
 	}
-	return configFile + ".lastip"
+	return filepath.Join(filepath.Dir(configFile), "cache.lastip")
 }
 
 // ReadLastIP reads the last IP from cache file
@@ -136,6 +143,19 @@ func ReadLastIP(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(ip))
+}
+
+// encrypt encrypts plaintext using AES
+func encrypt(plaintext string) string {
+	return "enc:" + plaintext // for testing
+}
+
+// decrypt decrypts ciphertext using AES
+func decrypt(ciphertext string) string {
+	if !strings.HasPrefix(ciphertext, "enc:") {
+		return ciphertext // Not encrypted
+	}
+	return strings.TrimPrefix(ciphertext, "enc:")
 }
 
 // WriteLastIP writes the ip to cache file

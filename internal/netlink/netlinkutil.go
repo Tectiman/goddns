@@ -2,14 +2,12 @@ package netlinkutil
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
-	stdnetlink "github.com/vishvananda/netlink"
 	"netlink_example/internal/log"
 	"netlink_example/internal/config"
 )
@@ -27,41 +25,7 @@ type IPv6Info struct {
 }
 
 // GetAvailableIPv6 returns IPv6 addresses from an interface
-func GetAvailableIPv6(interfaceName string) ([]IPv6Info, error) {
-	link, err := stdnetlink.LinkByName(interfaceName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find interface %s: %w", interfaceName, err)
-	}
-
-	addrList, err := stdnetlink.AddrList(link, stdnetlink.FAMILY_V6)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get address list for %s: %w", interfaceName, err)
-	}
-
-	var infos []IPv6Info
-	for _, addr := range addrList {
-		if addr.IP.To4() != nil {
-			continue
-		}
-		if addr.IP.IsLinkLocalUnicast() {
-			continue
-		}
-
-		info := IPv6Info{
-			IP:           addr.IP,
-			PreferredLft: time.Duration(addr.PreferedLft) * time.Second,
-			ValidLft:     time.Duration(addr.ValidLft) * time.Second,
-		}
-		populateInfo(&info)
-		infos = append(infos, info)
-	}
-
-	if len(infos) == 0 {
-		return nil, fmt.Errorf("no IPv6 address found on interface %s", interfaceName)
-	}
-
-	return infos, nil
-}
+// Implementation varies by platform: Linux uses netlink, others use command parsing
 
 func populateInfo(info *IPv6Info) {
 	ipBytes := info.IP
@@ -129,7 +93,6 @@ func SelectBestIPv6(config config.Config, infos []IPv6Info) (string, error) {
 		}
 	}
 
-	log.Info(false, "Selected IP via default 'Max Preferred Lifetime' strategy: %s", bestCandidate.IP.String())
 	return bestCandidate.IP.String(), nil
 }
 

@@ -7,7 +7,7 @@ import (
 
 	"netlink_example/internal/config"
 	"netlink_example/internal/log"
-	"netlink_example/internal/netlink"
+	"netlink_example/internal/platform/netlinkutil"
 	"netlink_example/internal/provider/cloudflare"
 )
 
@@ -62,22 +62,19 @@ func handleRunCommand(configFile string, ignoreCache bool) {
 
 	if !ignoreCache {
 		if lastIP != "" && lastIP == currentIP {
-			log.Info(false, "IP not changed (%s). Exiting.", currentIP)
+			log.Info(false, "IP has not changed: %s", currentIP)
 			return
 		}
-	} else {
-		log.Info(false, "Ignore-cache flag set; forcing update and writing current IP to cache.")
 	}
 
 	if lastIP != "" {
-		log.Info(false, "IP address changed from %s to %s. Initiating update.", lastIP, currentIP)
+		// IP changed, proceed with update
 	} else {
-		log.Info(false, "No previous IP found. Initiating first-time update to %s.", currentIP)
+		// First time update
 	}
 
 	zoneID := cfg.Cloudflare.ZoneID
 	if zoneID == "" {
-		log.Info(false, "Zone ID not cached. Fetching from provider...")
 		fetchedZoneID, err := provider.GetZoneID(cfg)
 		if err != nil {
 			log.Fatal(false, "Error fetching Zone ID: %v", err)
@@ -86,21 +83,19 @@ func handleRunCommand(configFile string, ignoreCache bool) {
 		zoneID = fetchedZoneID
 
 		if writeErr := config.WriteConfig(absConfigFile, cfg); writeErr != nil {
-			log.Error(false, "Warning: Failed to save Zone ID to config file. Error: %v", writeErr)
-		} else {
-			log.Info(false, "Zone ID saved to config file.")
+			log.Warning(false, "Warning: Failed to save Zone ID to config file: %v", writeErr)
 		}
 	}
 
-	success := provider.UpsertDNSRecord(cfg, currentIP, zoneID)
+	success, err := provider.UpsertDNSRecord(cfg, currentIP, zoneID)
 
 	if success {
 		if writeErr := config.WriteLastIP(cacheFilePath, currentIP); writeErr != nil {
-			log.Error(false, "Warning: Update succeeded, but failed to write IP to cache. Error: %v", writeErr)
+			log.Warning(false, "Update succeeded, but failed to write IP to cache: %v", writeErr)
 		}
-		log.Success(false, "DDNS update completed. IP: %s", currentIP)
+		log.Success(false, "DDNS update successful: %s", currentIP)
 	} else {
-		log.Error(false, "DDNS update failed for IP %s.", currentIP)
+		log.Error(false, "DDNS update failed: %v", err)
 	}
 }
 

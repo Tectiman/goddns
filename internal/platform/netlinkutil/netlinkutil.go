@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"netlink_example/internal/log"
-	"netlink_example/internal/config"
+	"goddns/internal/log"
+	"goddns/internal/config"
 )
 
 // IPv6Info contains information about an IPv6 address

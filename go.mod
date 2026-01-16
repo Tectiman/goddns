@@ -1,4 +1,4 @@
-module netlink_example
+module goddns
 
 go 1.24.4
 

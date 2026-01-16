@@ -14,7 +14,7 @@ import (
 
 	xnet "golang.org/x/net/proxy"
 
-	"netlink_example/internal/config"
+	"goddns/internal/config"
 )
 
 // CloudflareProvider implements Cloudflare-specific logic

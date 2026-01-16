@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"netlink_example/internal/log"
+	"goddns/internal/log"
 )
 
 // CloudflareConfig Cloudflare specific settings

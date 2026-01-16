@@ -6,12 +6,12 @@
     },
     "work_dir": "",
     "provider_options": {
-        "api_token": "enc:ou3ZYtKF0JR9bK1TDY6S9nsCadZ1fEd7Ci3bUUg5",
-        "zone_id": "enc:0b7a20a170693acc0ac8b2cfc45d2181",
+        "api_token": "enc:ou3ZYtKF0JR9bK1TDY6S9nsCadZ1fEd7Ci3bUijk",
+        "zone_id": "enc:0b7a20a170693acc0ac8b2cfc45d2189",
         "proxied": false,
         "ttl": 180,
         "domain": {
-            "zone": "contactofen.site",
+            "zone": "example.com",
             "record": "dev"
         }
     }

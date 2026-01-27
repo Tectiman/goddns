@@ -91,26 +91,25 @@ goddns 通过 JSON 格式的配置文件进行配置。以下是完整的配置�
 ```
 
 ### 配置字段详细说明
-provider: (字符串) DNS 服务提供商，目前支持 "cloudflare"。
-get_ip: (对象) IP 地址获取配置。
-interface: (字符串) 用于获取 IP 地址的网络接口名称（例如 "enp6s18"）。
-url: (字符串) 用于外部 IP 地址检测的 URL（例如 "https://ipv6.icanhazip.com"）。
-work_dir: (字符串，可选) 工作目录，用于存放 cache.lastip 文件。如果为空，则使用可执行文件所在的目录。建议设置为绝对路径，如 "/var/lib/goddns"
-log_output: (字符串，可选) 日志输出配置。可选值：
-- 留空或设置为 "shell": 日志输出到终端
-- 文件路径 (如 "/var/log/goddns.log"): 日志输出到指定文件
-provider_options: (对象) 特定于提供商的配置选项。
-api_token: (字符串) Cloudflare API 令牌。建议使用加密形式（enc:YOUR_ENCRYPTED_API_TOKEN）。
-zone_id: (字符串) Cloudflare 区域 ID。建议使用加密形式（enc:YOUR_ENCRYPTED_ZONE_ID）。
-proxied: (布尔值) 是否将 DNS 记录设置为 Cloudflare 代理（CDN）。
-ttl: (整数) DNS 记录的生存时间 (TTL)，单位为秒。
-domain: (对象) 域信息。
-zone: (字符串) 您的主域名（例如 "contactofen.site"）。
-record: (字符串) 要更新的子域记录（例如 "dev"）。
-proxy: (字符串，可选) 代理服务器配置。
-必须包含方案。支持的方案：http://host:port、https://host:port 或 socks5://host:port、socks5h://host:port。
-如果设置了 SOCKS5 代理，程序将对所有 Cloudflare API 请求使用它。
-如果 proxy 为空或省略，则使用直接连接。
+* provider: (字符串) DNS 服务提供商，目前支持 "cloudflare"。
+* get_ip: (对象) IP 地址获取配置。
+* interface: (字符串) 用于获取 IP 地址的网络接口名称（例如 "enp6s18"）。
+* url: (字符串) 用于外部 IP 地址检测的 URL（例如 "https://ipv6.icanhazip.com"）。
+* work_dir: (字符串，可选) 工作目录，用于存放 cache.lastip 文件。如果为空，则使用可执行文件所在的目录。建议设置为绝对路径，如 "/var/lib/goddns"
+* log_output: (字符串，可选) 日志输出配置。可选值：
+    - 留空或设置为 "shell": 日志输出到终端
+    - 文件路径 (如 "/var/log/goddns.log"): 日志输出到指定文件
+* provider_options: (对象) 特定于提供商的配置选项。
+* api_token: (字符串) Cloudflare API 令牌。
+* zone_id: (字符串) Cloudflare 区域 ID。
+* proxied: (布尔值) 是否将 DNS 记录设置为 Cloudflare 代理（CDN）。
+* ttl: (整数) DNS 记录的生存时间 (TTL)，单位为秒。
+* domain: (对象) 域信息。
+* zone: (字符串) 您的主域名（例如 "contactofen.site"）。
+* record: (字符串) 要更新的子域记录（例如 "dev"）。
+* proxy: (字符串，可选) 代理服务器配置。必须包含方案。支持的方案：http://host:port、https://host:port 或 socks5://host:port、socks5h://host:port。
+    如果设置了 SOCKS5 代理，程序将对所有 Cloudflare API 请求使用它。
+    如果 proxy 为空或省略，则使用直接连接。
 ## 自动运行配置
 
 ### 使用 systemd timer (推荐)

@@ -19,50 +19,30 @@
 
 ```bash
 go build -o goddns ./cmd/goddns
+```
 带版本信息构建
 您可以在构建时嵌入版本、提交和构建日期信息：
 
-bash
+```bash
 # 示例: 设置版本、提交和构建日期
 GOOS=linux GOARCH=amd64 go build -ldflags "-X main.version=1.2.3 -X main.commit=$(git rev-parse --short HEAD) -X 'main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" -o goddns ./cmd/goddns
+```
 使用
 显示版本信息
-bash
+```bash
 ./goddns -v
 # 或
 ./goddns --version
+```
 运行
-bash
+```bash
 ./goddns run -f /path/to/config.json [-i]
--i 参数用于忽略缓存并强制更新 IP。
+#-i 参数用于忽略缓存并强制更新 IP。
+```
 
-配置
-goddns 通过 config.json 文件进行配置。以下是一个示例配置片段及其解释：
-
-json
-{
-    "provider": "cloudflare",
-    "get_ip": {
-        "interface": "enp6s18",
-        "url": "https://ipv6.icanhazip.com"
-    },
-    "work_dir": "",
-    "log_output": "./goddns.log",
-    "provider_options": {
-        "api_token": "enc:YOUR_ENCRYPTED_API_TOKEN",
-        "zone_id": "enc:YOUR_ENCRYPTED_ZONE_ID",
-        "proxied": false,
-        "ttl": 180,
-        "domain": {
-            "zone": "yourdomain.com",
-            "record": "sub"
-        }
-    },
-    "proxy": "socks5://127.0.0.1:1080"
-}
 ## 配置说明
 
-goddns 通过 JSON 格式的配置文件进行配置。以下是完整的配置选项说明：
+goddns 通过 JSON 格式的配置文件config.json 进行配置。以下是完整的配置选项说明：
 
 ```json
 {

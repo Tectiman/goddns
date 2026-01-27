@@ -1,15 +1,19 @@
 package netlinkutil
+package netlinkutil
 
 import (
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"goddns/internal/log"
 	"goddns/internal/config"
+
+	xnet "golang.org/x/net/proxy"
 )
 
 // IPv6Info contains information about an IPv6 address
@@ -96,33 +100,80 @@ func SelectBestIPv6(config config.Config, infos []IPv6Info) (string, error) {
 	return bestCandidate.IP.String(), nil
 }
 
+// createHTTPClient creates an HTTP client with optional proxy support
+func createHTTPClient(cfg config.Config) (*http.Client, error) {
+	transport := &http.Transport{}
+
+	if cfg.Proxy != "" {
+		proxyURL, err := url.Parse(cfg.Proxy)
+		if err != nil {
+			return nil, err
+		}
+
+		switch proxyURL.Scheme {
+		case "http", "https":
+			transport.Proxy = http.ProxyURL(proxyURL)
+		case "socks5", "socks5h":
+			var auth *xnet.Auth
+			if proxyURL.User != nil {
+				pw, _ := proxyURL.User.Password()
+				username := proxyURL.User.Username()
+				auth = &xnet.Auth{User: username, Password: pw}
+			}
+			dialer, err := xnet.SOCKS5("tcp", proxyURL.Host, auth, xnet.Direct)
+			if err != nil {
+				return nil, err
+			}
+			transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialer.Dial(network, addr)
+			}
+		default:
+			return nil, errors.New("unsupported proxy scheme: " + proxyURL.Scheme)
+		}
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   15 * time.Second,
+	}, nil
+}
+
 // GetIPv6Fallback queries remote API for an IPv6 address
 func GetIPv6Fallback(cfg config.Config, quiet bool) ([]IPv6Info, error) {
 	var urls []string
-	if cfg.GetIP.URL != "" {
-		urls = append(urls, cfg.GetIP.URL)
+	
+	// 优先使用新的URLs数组字段，如果没有则使用旧的URL字段
+	if len(cfg.GetIP.URLs) > 0 {
+		urls = cfg.GetIP.URLs
+	} else if cfg.GetIP.URL != "" {
+		urls = []string{cfg.GetIP.URL}
 	}
+	
 	if len(urls) == 0 {
-		return nil, errors.New("no IP API URL configured in 'get_ip.url'")
+		return nil, errors.New("no IP API URL configured in 'get_ip.urls' or 'get_ip.url'")
 	}
 
-	const timeout = 5 * time.Second
-	const retries = 1
+	const retries = 2
 
 	for i, url := range urls {
 		if !quiet {
 			log.Info(quiet, "Trying fallback API %d/%d: %s", i+1, len(urls), url)
 		}
 
+		// 创建支持代理的HTTP客户端
+		client, err := createHTTPClient(cfg)
+		if err != nil {
+			return nil, errors.New("failed to create HTTP client with proxy: " + err.Error())
+		}
+
 		for attempt := 0; attempt <= retries; attempt++ {
-			client := &http.Client{Timeout: timeout}
 			resp, err := client.Get(url)
 			if err != nil {
 				if !quiet && attempt == retries {
 					log.Error(quiet, "Fallback API %s (attempt %d/%d) failed: %v", url, attempt+1, retries, err)
 				}
 				if attempt < retries {
-					time.Sleep(time.Second)
+					time.Sleep(time.Second * 2)
 				}
 				continue
 			}
@@ -132,7 +183,7 @@ func GetIPv6Fallback(cfg config.Config, quiet bool) ([]IPv6Info, error) {
 				if !quiet {
 					log.Error(quiet, "Fallback API %s returned status: %d", url, resp.StatusCode)
 				}
-				break
+				continue // 继续尝试下一个URL，而不是跳出循环
 			}
 
 			body, err := io.ReadAll(resp.Body)
@@ -140,7 +191,7 @@ func GetIPv6Fallback(cfg config.Config, quiet bool) ([]IPv6Info, error) {
 				if !quiet {
 					log.Error(quiet, "Failed to read response from %s: %v", url, err)
 				}
-				break
+				continue // 继续尝试下一个URL
 			}
 
 			lines := strings.Split(string(body), "\n")
@@ -164,7 +215,7 @@ func GetIPv6Fallback(cfg config.Config, quiet bool) ([]IPv6Info, error) {
 				if !quiet {
 					log.Error(quiet, "No valid IPv6 found in response from %s: '%s' (must be pure Global Unicast IPv6 on first valid line)", url, string(body))
 				}
-				break
+				continue // 继续尝试下一个URL
 			}
 
 			ip := net.ParseIP(candidateIPStr)
@@ -183,7 +234,7 @@ func GetIPv6Fallback(cfg config.Config, quiet bool) ([]IPv6Info, error) {
 	}
 
 	if !quiet {
-		log.Error(false, "All fallback APIs failed. Response must contain a pure text Global Unicast IPv6 address on the first valid line.")
+		log.Error(false, "All fallback APIs failed. Tried %d URLs: %v", len(urls), urls)
 	}
 	return nil, errors.New("all fallback APIs invalid")
 }

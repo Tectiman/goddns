@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !freebsd
 
 package netlinkutil
 
@@ -14,6 +14,7 @@ import (
 
 // parseLifetime converts lifetime string to seconds
 func parseLifetime(s string) (int64, error) {
+	"your_module/shared" // Import shared.go for IPv6Info and functions
 	if s == "forever" || s == "infinity" {
 		return 315360000, nil // 10 years, as a large number for "forever"
 	}

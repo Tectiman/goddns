@@ -1,0 +1,8 @@
+config.json
+goddns
+cache.lastip
+*.log
+.DS_Store
+.vscode/
+*.swp
+*.swo

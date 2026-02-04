@@ -114,7 +114,7 @@ crontab -e
 - `cmd/goddns/`：主程序入口
 - `internal/config/`：配置与缓存
 - `internal/log/`：日志
-- `internal/platform/netlinkutil/`：平台相关网络工具
+- `internal/platform/ifaddr/`：平台相关网络工具
 - `internal/provider/cloudflare/`：Cloudflare API
 
 ## 许可证

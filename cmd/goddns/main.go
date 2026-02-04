@@ -7,7 +7,7 @@ import (
 
 	"goddns/internal/config"
 	"goddns/internal/log"
-	"goddns/internal/platform/netlinkutil"
+	"goddns/internal/platform/ifaddr"
 	"goddns/internal/provider/cloudflare"
 )
 
@@ -40,26 +40,26 @@ func handleRunCommand(configFile string, ignoreCache bool) {
 
 	provider := cloudflare.NewProvider(cfg)
 
-	var infos []netlinkutil.IPv6Info
+	var infos []ifaddr.IPv6Info
 	var err error
 	if cfg.GetIP.Interface != "" {
-		infos, err = netlinkutil.GetAvailableIPv6(cfg.GetIP.Interface)
+		infos, err = ifaddr.GetAvailableIPv6(cfg.GetIP.Interface)
 		if err != nil {
 			log.Info("Interface %s failed: %v", cfg.GetIP.Interface, err)
 			log.Info("Trying fallback API...")
-			infos, err = netlinkutil.GetIPv6Fallback(cfg, false)
+			infos, err = ifaddr.GetIPv6Fallback(cfg, false)
 			if err != nil {
 				log.Fatal("Fallback also failed: %v", err)
 			}
 		}
 	} else {
-		infos, err = netlinkutil.GetIPv6Fallback(cfg, false)
+		infos, err = ifaddr.GetIPv6Fallback(cfg, false)
 		if err != nil {
 			log.Fatal("Fallback failed: %v", err)
 		}
 	}
 
-	currentIP, err := netlinkutil.SelectBestIPv6(cfg, infos)
+	currentIP, err := ifaddr.SelectBestIPv6(cfg, infos)
 	if err != nil {
 		log.Fatal("Failed to select best IPv6 address: %v", err)
 	}

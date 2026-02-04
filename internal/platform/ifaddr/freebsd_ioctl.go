@@ -1,6 +1,6 @@
 //go:build freebsd
 
-package netlinkutil
+package ifaddr
 
 /*
 #include <stdio.h>
@@ -106,62 +106,59 @@ int get_ipv6info_freebsd(const char *ifname, char *addresses_buf, size_t max_len
 */
 import "C"
 import (
-	"encoding/json"
-	"errors"
-	"unsafe"
-	"time"
-	"net"
+    "encoding/json"
+    "errors"
+    "unsafe"
+    "time"
+    "net"
 )
 
 type ioctlAddrInfo struct {
-	Addr        string `json:"addr"`
-	Pltime      uint32 `json:"pltime"`
-	Vltime      uint32 `json:"vltime"`
-	RemainPref  int64  `json:"remain_pref"`
-	RemainValid int64  `json:"remain_valid"`
+    Addr        string `json:"addr"`
+    Pltime      uint32 `json:"pltime"`
+    Vltime      uint32 `json:"vltime"`
+    RemainPref  int64  `json:"remain_pref"`
+    RemainValid int64  `json:"remain_valid"`
 }
 
 // GetAvailableIPv6 uses ioctl to get IPv6 info on FreeBSD
 func GetAvailableIPv6(ifaceName string) ([]IPv6Info, error) {
-	cIfname := C.CString(ifaceName)
-	defer C.free(unsafe.Pointer(cIfname))
+    cIfname := C.CString(ifaceName)
+    defer C.free(unsafe.Pointer(cIfname))
 
-	const bufSize = 4096
-	buf := make([]byte, bufSize)
-	cBuf := (*C.char)(unsafe.Pointer(&buf[0]))
+    const bufSize = 4096
+    buf := make([]byte, bufSize)
+    cBuf := (*C.char)(unsafe.Pointer(&buf[0]))
 
-	var errcode C.int
-	ret := C.get_ipv6info_freebsd(cIfname, cBuf, C.size_t(bufSize), &errcode)
+    var errcode C.int
+    ret := C.get_ipv6info_freebsd(cIfname, cBuf, C.size_t(bufSize), &errcode)
 
-	// 添加调试信息
-	jsonStr := C.GoString(cBuf)
-	// 这里可以添加日志输出来查看实际的 JSON 内容
-	// log.Debugf("Raw JSON from C: %s", jsonStr)
+    jsonStr := C.GoString(cBuf)
 
-	switch ret {
-	case 0:
-		var addrs []ioctlAddrInfo
-		err := json.Unmarshal([]byte(jsonStr), &addrs)
-		if err != nil {
-			return nil, err
-		}
-		var infos []IPv6Info
-		for _, a := range addrs {
-			ip := net.ParseIP(a.Addr)
-			info := IPv6Info{
-				IP:           ip,
-				PreferredLft: time.Duration(a.Pltime) * time.Second,
-				ValidLft:     time.Duration(a.Vltime) * time.Second,
-			}
-			populateInfo(&info)
-			infos = append(infos, info)
-		}
-		return infos, nil
-	case 1:
-		return nil, errors.New("interface not found or inaccessible")
-	case 2:
-		return nil, errors.New("no global IPv6 address found on interface")
-	default:
-		return nil, errors.New("unexpected error from ioctl cgo")
-	}
+    switch ret {
+    case 0:
+        var addrs []ioctlAddrInfo
+        err := json.Unmarshal([]byte(jsonStr), &addrs)
+        if err != nil {
+            return nil, err
+        }
+        var infos []IPv6Info
+        for _, a := range addrs {
+            ip := net.ParseIP(a.Addr)
+            info := IPv6Info{
+                IP:           ip,
+                PreferredLft: time.Duration(a.Pltime) * time.Second,
+                ValidLft:     time.Duration(a.Vltime) * time.Second,
+            }
+            populateInfo(&info)
+            infos = append(infos, info)
+        }
+        return infos, nil
+    case 1:
+        return nil, errors.New("interface not found or inaccessible")
+    case 2:
+        return nil, errors.New("no global IPv6 address found on interface")
+    default:
+        return nil, errors.New("unexpected error from ioctl cgo")
+    }
 }

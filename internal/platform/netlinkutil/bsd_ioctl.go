@@ -20,7 +20,7 @@ package netlinkutil
 #define ND6_INFINITE_LIFETIME 0xffffffffU
 
 // 返回值：0=成功（有地址），1=接口不存在，2=没有全局IPv6地址，-1=其他错误
-// addresses_buf: 调用方分配的缓冲区，用于存放 JSON 数组部分 "[{...},{...}]"
+// addresses_buf: 调用方分配的缓冲区，用于存放完整的 JSON 数组 "[{...},{...}]"
 // max_len: 缓冲区大小
 int get_ipv6info_freebsd(const char *ifname, char *addresses_buf, size_t max_len, int *error_code) {
     *error_code = 0;
@@ -46,7 +46,10 @@ int get_ipv6info_freebsd(const char *ifname, char *addresses_buf, size_t max_len
     int count = 0;
     char *ptr = addresses_buf;
     size_t remain = max_len;
-    *ptr = '\0';
+    
+    // 开始数组
+    ptr += snprintf(ptr, remain, "[");
+    remain = max_len - (ptr - addresses_buf);
 
     struct ifaddrs *ifa;
     for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
@@ -85,6 +88,10 @@ int get_ipv6info_freebsd(const char *ifname, char *addresses_buf, size_t max_len
         remain = max_len - (ptr - addresses_buf);
         count++;
     }
+
+    // 结束数组
+    ptr += snprintf(ptr, remain, "]");
+    remain = max_len - (ptr - addresses_buf);
 
     close(s);
     freeifaddrs(ifap);
@@ -126,10 +133,15 @@ func GetAvailableIPv6(ifaceName string) ([]IPv6Info, error) {
 	var errcode C.int
 	ret := C.get_ipv6info_freebsd(cIfname, cBuf, C.size_t(bufSize), &errcode)
 
+	// 添加调试信息
+	jsonStr := C.GoString(cBuf)
+	// 这里可以添加日志输出来查看实际的 JSON 内容
+	// log.Debugf("Raw JSON from C: %s", jsonStr)
+
 	switch ret {
 	case 0:
 		var addrs []ioctlAddrInfo
-		err := json.Unmarshal([]byte(C.GoString(cBuf)), &addrs)
+		err := json.Unmarshal([]byte(jsonStr), &addrs)
 		if err != nil {
 			return nil, err
 		}

@@ -2,10 +2,14 @@
 
 [goddns](./goddns) 是一个用 Go 编写的轻量级且功能强大的动态 DNS (DDNS) 客户端。它自动更新 Cloudflare DNS 记录，支持 IPv6，具备跨平台能力和丰富的日志输出。
 
-## 特性
+
+## 平台支持说明
+- **多平台适配**：Linux 使用 netlink，FreeBSD/openBSD 使用 ioctl。
+- **macOS 支持说明**：由于手头没有 mac 设备进行测试，暂时未支持 macOS，欢迎有能力的开发者提交 PR 以完善 macOS 兼容性。
+
+其他特性：
 - **Cloudflare 集成**：自动更新 Cloudflare DNS 记录。
 - **IPv6 支持**：原生支持 IPv6，支持多平台接口获取。
-- **多平台适配**：Linux 使用 netlink，FreeBSD/macOS 使用 ioctl/ifconfig。
 - **代理支持**：支持 HTTP(S)/SOCKS5 代理。
 - **IP 缓存**：避免重复 API 调用。
 - **彩色日志**：终端下日志分级彩色显示，支持文件输出。

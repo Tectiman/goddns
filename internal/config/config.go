@@ -44,25 +44,25 @@ func ReadConfig(path string, quiet bool) (Config, string) {
 	config := Config{}
 	configFile, err := filepath.Abs(path)
 	if err != nil {
-		log.Fatal("Invalid config file path: %v", err)
+		return config, ""
 	}
 
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		log.Fatal("Could not read config file %s: %v", configFile, err)
+		return config, ""
 	}
 
 	if err := json.Unmarshal(data, &config); err != nil {
-		log.Fatal("Could not parse config file %s: %v", configFile, err)
+		return config, ""
 	}
 
 	// 直接明文处理，无需解密
 
 	if config.Provider == "" {
-		log.Fatal("Config file missing required field: provider")
+		return config, ""
 	}
 	if config.Provider != "cloudflare" {
-		log.Fatal("Only 'cloudflare' provider is supported currently.")
+		return config, ""
 	}
 
 	// 检查IP源配置，同时支持interface和urls/url字段
@@ -70,14 +70,14 @@ func ReadConfig(path string, quiet bool) (Config, string) {
 	hasURL := config.GetIP.URL != "" || len(config.GetIP.URLs) > 0
 
 	if !hasInterface && !hasURL {
-		log.Fatal("Config file missing 'get_ip' settings: at least one of 'interface', 'url' or 'urls' must be set")
+		return config, ""
 	}
 
 	if config.Cloudflare.APIToken == "" {
-		log.Fatal("Config file missing required field: provider_options.api_token")
+		return config, ""
 	}
 	if config.Cloudflare.Domain.Zone == "" || config.Cloudflare.Domain.Record == "" {
-		log.Fatal("Config file missing required provider_options.domain.zone or provider_options.domain.record")
+		return config, ""
 	}
 
 	changed := false

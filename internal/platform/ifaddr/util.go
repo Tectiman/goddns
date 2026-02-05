@@ -19,12 +19,7 @@ import (
 
 // SelectBestIPv6 selects the best IPv6 based on PreferredLft
 func SelectBestIPv6(cfg config.Config, infos []IPv6Info) (string, error) {
-    candidates := make([]IPv6Info, 0)
-    for _, info := range infos {
-        if info.IsCandidate {
-            candidates = append(candidates, info)
-        }
-    }
+    candidates := filterValidAddresses(infos)
 
     if len(candidates) == 0 {
         return "", errors.New("no suitable DDNS Candidate (Global Unicast, not deprecated) found")
@@ -40,6 +35,33 @@ func SelectBestIPv6(cfg config.Config, infos []IPv6Info) (string, error) {
     }
 
     return bestCandidate.IP.String(), nil
+}
+
+// filterValidAddresses centralizes IPv6 candidate filtering.
+// It returns addresses that are suitable DDNS candidates: non-nil, global unicast,
+// not deprecated, not unique-local, not link-local or loopback, and have non-zero ValidLft.
+func filterValidAddresses(infos []IPv6Info) []IPv6Info {
+    var out []IPv6Info
+    for _, info := range infos {
+        if info.IP == nil {
+            continue
+        }
+        if info.IP.To4() != nil {
+            continue
+        }
+        if info.IP.IsLinkLocalUnicast() || info.IP.IsLoopback() {
+            continue
+        }
+        if info.ValidLft.Seconds() == 0 {
+            continue
+        }
+        // Prefer explicit IsCandidate when present (populated by platform code);
+        // otherwise apply the same rules used by populateInfo.
+        if info.IsCandidate || (info.Scope == "Global Unicast" && !info.IsDeprecated && !info.IsUniqueLocal) {
+            out = append(out, info)
+        }
+    }
+    return out
 }
 
 // createHTTPClient creates an HTTP client with optional proxy support
@@ -106,6 +128,19 @@ func GetIPv6Fallback(cfg config.Config, quiet bool) ([]IPv6Info, error) {
 
     for _, u := range urls {
         go func(u string) {
+            defer func() {
+                if r := recover(); r != nil {
+                    select {
+                    case resultChan <- struct {
+                        info []IPv6Info
+                        err  error
+                        url  string
+                    }{nil, fmt.Errorf("panic in fallback goroutine: %v", r), u}:
+                    case <-ctx.Done():
+                        return
+                    }
+                }
+            }()
             client, err := createHTTPClient(cfg)
             if err != nil {
                 select {

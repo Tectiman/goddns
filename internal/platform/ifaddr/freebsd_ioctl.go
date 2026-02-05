@@ -58,9 +58,7 @@ int get_ipv6info_freebsd(const char *ifname, char *addresses_buf, size_t max_len
             continue;
 
         struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)ifa->ifa_addr;
-        if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr))
-            continue;
-
+        // 注意：这里不排除链路本地地址，让上层过滤
         char addr_str[INET6_ADDRSTRLEN];
         inet_ntop(AF_INET6, &sin6->sin6_addr, addr_str, sizeof(addr_str));
 
@@ -74,8 +72,10 @@ int get_ipv6info_freebsd(const char *ifname, char *addresses_buf, size_t max_len
 
         struct in6_addrlifetime lt = ifr6.ifr_ifru.ifru_lifetime;
         time_t now = time(NULL);
-        long rp = (lt.ia6t_preferred > now && lt.ia6t_preferred != (time_t)-1) ? (lt.ia6t_preferred - now) : -1;
-        long rv = (lt.ia6t_expire > now && lt.ia6t_expire != (time_t)-1) ? (lt.ia6t_expire - now) : -1;
+        
+        // Convert to pltime/vltime format
+        unsigned int pltime = (lt.ia6t_preferred != (time_t)-1) ? (unsigned int)(lt.ia6t_preferred - now) : ND6_INFINITE_LIFETIME;
+        unsigned int vltime = (lt.ia6t_expire != (time_t)-1) ? (unsigned int)(lt.ia6t_expire - now) : ND6_INFINITE_LIFETIME;
 
         if (count > 0) {
             ptr += snprintf(ptr, remain, ",");
@@ -83,8 +83,8 @@ int get_ipv6info_freebsd(const char *ifname, char *addresses_buf, size_t max_len
         }
 
         ptr += snprintf(ptr, remain,
-            "{\"addr\":\"%s\",\"pltime\":%u,\"vltime\":%u,\"remain_pref\":%ld,\"remain_valid\":%ld}",
-            addr_str, lt.ia6t_pltime, lt.ia6t_vltime, rp, rv);
+            "{\"addr\":\"%s\",\"pltime\":%u,\"vltime\":%u}",
+            addr_str, pltime, vltime);
         remain = max_len - (ptr - addresses_buf);
         count++;
     }
@@ -114,11 +114,9 @@ import (
 )
 
 type ioctlAddrInfo struct {
-    Addr        string `json:"addr"`
-    Pltime      uint32 `json:"pltime"`
-    Vltime      uint32 `json:"vltime"`
-    RemainPref  int64  `json:"remain_pref"`
-    RemainValid int64  `json:"remain_valid"`
+    Addr   string `json:"addr"`
+    Pltime uint32 `json:"pltime"`  // Preferred lifetime in seconds
+    Vltime uint32 `json:"vltime"`  // Valid lifetime in seconds
 }
 
 // GetAvailableIPv6 uses ioctl to get IPv6 info on FreeBSD

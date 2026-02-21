@@ -1,6 +1,7 @@
 package aliyun
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
@@ -22,7 +23,7 @@ type AliyunProvider struct {
 }
 
 const (
-	aliyunAPIEndpoint = "http://alidns.aliyuncs.com/"
+	aliyunAPIEndpoint = "https://alidns.aliyuncs.com/"
 	apiVersion        = "2015-01-09"
 	defaultRetries    = 3
 	baseDelay         = 1 * time.Second
@@ -36,6 +37,11 @@ func NewProvider(accessKeyID, accessKeySecret string) *AliyunProvider {
 	}
 }
 
+// Name returns the provider name
+func (p *AliyunProvider) Name() string {
+	return "aliyun"
+}
+
 // sign creates the HMAC-SHA1 signature
 func (p *AliyunProvider) sign(signString string) string {
 	h := hmac.New(sha1.New, []byte(p.accessKeySecret+"&"))
@@ -44,7 +50,7 @@ func (p *AliyunProvider) sign(signString string) string {
 }
 
 // signRequest signs and sends the request
-func (p *AliyunProvider) signRequest(params map[string]string) (*http.Response, error) {
+func (p *AliyunProvider) signRequest(ctx context.Context, params map[string]string) (*http.Response, error) {
 	params["AccessKeyId"] = p.accessKeyID
 	params["Format"] = "JSON"
 	params["SignatureMethod"] = "HMAC-SHA1"
@@ -66,7 +72,12 @@ func (p *AliyunProvider) signRequest(params map[string]string) (*http.Response, 
 	reqURL := aliyunAPIEndpoint + "?" + values.Encode()
 
 	for attempt := 0; attempt <= defaultRetries; attempt++ {
-		resp, err := http.Get(reqURL)
+		req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			if attempt == defaultRetries {
 				return nil, fmt.Errorf("API request failed after %d retries: %w", defaultRetries, err)
@@ -115,13 +126,13 @@ func (p *AliyunProvider) generateSignature(params map[string]string) string {
 }
 
 // GetRecordID gets the DNS record ID for the given domain
-func (p *AliyunProvider) GetRecordID(domain string) (string, error) {
+func (p *AliyunProvider) GetRecordID(ctx context.Context, domain string) (string, error) {
 	params := map[string]string{
-		"Action":   "DescribeSubDomainRecords",
+		"Action":    "DescribeSubDomainRecords",
 		"SubDomain": domain,
 	}
 
-	resp, err := p.signRequest(params)
+	resp, err := p.signRequest(ctx, params)
 	if err != nil {
 		return "", err
 	}
@@ -169,54 +180,13 @@ func (p *AliyunProvider) GetRecordID(domain string) (string, error) {
 	return result.DomainRecords.Record[0].RecordID, nil
 }
 
-// GetDomain gets the main domain from the full domain
-func (p *AliyunProvider) GetDomain(zone string) (string, error) {
-	params := map[string]string{
-		"Action": "DescribeDomains",
-	}
-
-	resp, err := p.signRequest(params)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var result struct {
-		Domains struct {
-			Domain []struct {
-				DomainName string `json:"DomainName"`
-			} `json:"Domain"`
-		} `json:"Domains"`
-		TotalCount int    `json:"TotalCount"`
-		Code       string `json:"Code"`
-		Message    string `json:"Message"`
-	}
-
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if result.Code != "" {
-		return "", fmt.Errorf("API error: %s - %s", result.Code, result.Message)
-	}
-
-	// Find matching domain
-	for _, domain := range result.Domains.Domain {
-		if zone == domain.DomainName || strings.HasSuffix(zone, "."+domain.DomainName) {
-			return domain.DomainName, nil
-		}
-	}
-
-	return "", fmt.Errorf("domain %s not found in Aliyun", zone)
+// UpsertRecord creates or updates a DNS record (implements provider.Provider interface)
+func (p *AliyunProvider) UpsertRecord(ctx context.Context, zone, record, ip string, ttl int, extra map[string]interface{}) (bool, error) {
+	return p.UpsertDNSRecord(ctx, zone, record, ip, ttl)
 }
 
 // UpsertDNSRecord creates or updates a DNS record
-func (p *AliyunProvider) UpsertDNSRecord(zone, record, ip string, ttl int) (bool, error) {
+func (p *AliyunProvider) UpsertDNSRecord(ctx context.Context, zone, record, ip string, ttl int) (bool, error) {
 	// Build full domain name
 	var fullDomain string
 	if record == "@" {
@@ -226,7 +196,7 @@ func (p *AliyunProvider) UpsertDNSRecord(zone, record, ip string, ttl int) (bool
 	}
 
 	// Get existing record ID
-	recordID, err := p.GetRecordID(fullDomain)
+	recordID, err := p.GetRecordID(ctx, fullDomain)
 	if err != nil {
 		return false, fmt.Errorf("failed to get record ID: %w", err)
 	}
@@ -236,11 +206,11 @@ func (p *AliyunProvider) UpsertDNSRecord(zone, record, ip string, ttl int) (bool
 	if recordID == "" {
 		// Create new record
 		params = map[string]string{
-			"Action":    "AddDomainRecord",
+			"Action":     "AddDomainRecord",
 			"DomainName": zone,
-			"RR":        record,
-			"Type":      "AAAA",
-			"Value":     ip,
+			"RR":         record,
+			"Type":       "AAAA",
+			"Value":      ip,
 		}
 		if ttl > 0 {
 			params["TTL"] = strconv.Itoa(ttl)
@@ -259,7 +229,7 @@ func (p *AliyunProvider) UpsertDNSRecord(zone, record, ip string, ttl int) (bool
 		}
 	}
 
-	resp, err := p.signRequest(params)
+	resp, err := p.signRequest(ctx, params)
 	if err != nil {
 		return false, fmt.Errorf("API request failed: %w", err)
 	}

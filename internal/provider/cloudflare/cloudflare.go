@@ -13,8 +13,6 @@ import (
 	"time"
 
 	xnet "golang.org/x/net/proxy"
-
-	"goddns/internal/log"
 )
 
 // CloudflareProvider implements Cloudflare-specific logic
@@ -52,8 +50,13 @@ func NewProvider(cfg Config, apiToken string) *CloudflareProvider {
 	}
 }
 
+// Name returns the provider name
+func (p *CloudflareProvider) Name() string {
+	return "cloudflare"
+}
+
 // cfRequest with retry
-func (p *CloudflareProvider) cfRequest(method string, endpoint string, data interface{}) (*http.Response, error) {
+func (p *CloudflareProvider) cfRequest(ctx context.Context, method string, endpoint string, data interface{}) (*http.Response, error) {
 	var body io.Reader
 	if data != nil {
 		jsonBody, _ := json.Marshal(data)
@@ -61,7 +64,7 @@ func (p *CloudflareProvider) cfRequest(method string, endpoint string, data inte
 	}
 
 	for attempt := 0; attempt <= defaultRetries; attempt++ {
-		req, err := http.NewRequest(method, endpoint, body)
+		req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 		if err != nil {
 			return nil, err
 		}
@@ -121,9 +124,9 @@ func (p *CloudflareProvider) cfRequest(method string, endpoint string, data inte
 }
 
 // GetZoneID returns the Cloudflare Zone ID for the given zone name
-func (p *CloudflareProvider) GetZoneID(zoneName string) (string, error) {
+func (p *CloudflareProvider) GetZoneID(ctx context.Context, zoneName string) (string, error) {
 	reqURL := zonesEndpoint + "?name=" + zoneName
-	resp, err := p.cfRequest("GET", reqURL, nil)
+	resp, err := p.cfRequest(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -155,13 +158,19 @@ func (p *CloudflareProvider) GetZoneID(zoneName string) (string, error) {
 	return result.Result[0].ID, nil
 }
 
-// UpsertDNSRecord creates or updates a DNS record
-func (p *CloudflareProvider) UpsertDNSRecord(zoneName, recordName, ip, zoneID string, ttl int, proxied bool) (bool, error) {
+// UpsertRecord creates or updates a DNS record
+func (p *CloudflareProvider) UpsertRecord(ctx context.Context, zoneName, recordName, ip, zoneID string, ttl int, extra map[string]interface{}) (bool, error) {
 	fqdn := recordName + "." + zoneName
 	recordType := "AAAA"
 
+	// Get proxied from extra params
+	proxied := false
+	if v, ok := extra["proxied"]; ok {
+		proxied = v.(bool)
+	}
+
 	searchURL := fmt.Sprintf("%s/%s/dns_records?type=%s&name=%s", zonesEndpoint, zoneID, recordType, fqdn)
-	resp, err := p.cfRequest("GET", searchURL, nil)
+	resp, err := p.cfRequest(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to search existing DNS record: %w", err)
 	}
@@ -202,7 +211,6 @@ func (p *CloudflareProvider) UpsertDNSRecord(zoneName, recordName, ip, zoneID st
 		existing := searchResult.Result[0]
 		// Check if update is needed
 		if existing.Content == ip && existing.Proxied == proxied && existing.TTL == ttl {
-			log.Info("DNS record %s is up to date, no update needed", fqdn)
 			return true, nil
 		}
 		recordID := existing.ID
@@ -213,7 +221,7 @@ func (p *CloudflareProvider) UpsertDNSRecord(zoneName, recordName, ip, zoneID st
 		apiEndpoint = fmt.Sprintf("%s/%s/dns_records", zonesEndpoint, zoneID)
 	}
 
-	resp, err = p.cfRequest(method, apiEndpoint, newRecordData)
+	resp, err = p.cfRequest(ctx, method, apiEndpoint, newRecordData)
 	if err != nil {
 		return false, fmt.Errorf("API call failed during %s: %w", method, err)
 	}
@@ -237,4 +245,17 @@ func (p *CloudflareProvider) UpsertDNSRecord(zoneName, recordName, ip, zoneID st
 	}
 
 	return true, nil
+}
+
+// UpsertDNSRecord is a wrapper for backward compatibility
+func (p *CloudflareProvider) UpsertDNSRecord(zoneName, recordName, ip, zoneID string, ttl int, proxied bool) (bool, error) {
+	ctx := context.Background()
+	extra := map[string]interface{}{"proxied": proxied}
+	return p.UpsertRecord(ctx, zoneName, recordName, ip, zoneID, ttl, extra)
+}
+
+// GetZoneID is a wrapper for backward compatibility
+func (p *CloudflareProvider) GetZoneIDLegacy(zoneName string) (string, error) {
+	ctx := context.Background()
+	return p.GetZoneID(ctx, zoneName)
 }

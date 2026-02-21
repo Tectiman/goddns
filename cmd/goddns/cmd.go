@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
+	"time"
 
 	"goddns/internal/config"
 	"goddns/internal/log"
@@ -39,10 +43,24 @@ var runCmd = &cobra.Command{
 		// 解析参数
 		configPath, _ := cmd.Flags().GetString("config")
 		ignoreCache, _ := cmd.Flags().GetBool("ignore-cache")
+		timeout, _ := cmd.Flags().GetInt("timeout")
 		if configPath == "" {
 			fmt.Fprintln(os.Stderr, "缺少配置文件参数：--config")
 			os.Exit(1)
 		}
+
+		// 创建带超时的 context
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+		defer cancel()
+
+		// 监听信号，支持优雅退出
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigChan
+			log.Info("Received shutdown signal, exiting...")
+			cancel()
+		}()
 
 		// 读取配置
 		cfg, absConfigFile := config.ReadConfig(configPath, false)
@@ -102,20 +120,21 @@ var runCmd = &cobra.Command{
 		}
 
 		// 批量更新所有记录
-		updateRecords(cfg, currentIP, cacheFilePath, ignoreCache)
+		updateRecords(ctx, cfg, currentIP, cacheFilePath, ignoreCache)
 	},
 }
 
 // updateRecords updates all DNS records in parallel
-func updateRecords(cfg *config.Config, currentIP string, cacheFilePath string, ignoreCache bool) {
+func updateRecords(ctx context.Context, cfg *config.Config, currentIP string, cacheFilePath string, ignoreCache bool) {
 	var wg sync.WaitGroup
 	results := make([]updateResult, len(cfg.Records))
+	var mu sync.Mutex // 保护缓存文件写入
 
 	for i, record := range cfg.Records {
 		wg.Add(1)
 		go func(idx int, rec config.RecordConfig) {
 			defer wg.Done()
-			results[idx] = updateSingleRecord(cfg, &rec, currentIP, cacheFilePath, ignoreCache)
+			results[idx] = updateSingleRecord(ctx, cfg, &rec, currentIP, cacheFilePath, ignoreCache, &mu)
 		}(i, record)
 	}
 
@@ -146,8 +165,17 @@ type updateResult struct {
 }
 
 // updateSingleRecord updates a single DNS record
-func updateSingleRecord(cfg *config.Config, record *config.RecordConfig, currentIP string, cacheFilePath string, ignoreCache bool) updateResult {
+func updateSingleRecord(ctx context.Context, cfg *config.Config, record *config.RecordConfig, currentIP string, cacheFilePath string, ignoreCache bool, cacheMu *sync.Mutex) updateResult {
 	result := updateResult{record: fmt.Sprintf("%s.%s", record.Record, record.Zone)}
+
+	// 检查 context 是否已取消
+	select {
+	case <-ctx.Done():
+		result.err = ctx.Err()
+		result.success = false
+		return result
+	default:
+	}
 
 	log.Info("Processing record: %s (%s)", result.record, record.Provider)
 
@@ -171,7 +199,7 @@ func updateSingleRecord(cfg *config.Config, record *config.RecordConfig, current
 		// 如果 ZoneID 为空，自动获取
 		if zoneID == "" {
 			log.Info("Zone ID not configured, fetching for zone: %s", record.Zone)
-			fetchedZoneID, err := provider.GetZoneID(record.Zone)
+			fetchedZoneID, err := provider.GetZoneID(ctx, record.Zone)
 			if err != nil {
 				log.Error("Failed to fetch Zone ID: %v", err)
 				result.err = fmt.Errorf("failed to get Zone ID: %w", err)
@@ -199,7 +227,8 @@ func updateSingleRecord(cfg *config.Config, record *config.RecordConfig, current
 		}
 
 		// 更新 DNS 记录
-		success, err := provider.UpsertDNSRecord(record.Zone, record.Record, currentIP, zoneID, ttl, proxied)
+		extra := map[string]interface{}{"proxied": proxied}
+		success, err := provider.UpsertRecord(ctx, record.Zone, record.Record, currentIP, zoneID, ttl, extra)
 		if err != nil {
 			log.Error("Failed to update %s: %v", result.record, err)
 			result.err = err
@@ -235,7 +264,7 @@ func updateSingleRecord(cfg *config.Config, record *config.RecordConfig, current
 		}
 
 		// 更新 DNS 记录
-		success, err := provider.UpsertDNSRecord(record.Zone, record.Record, currentIP, ttl)
+		success, err := provider.UpsertDNSRecord(ctx, record.Zone, record.Record, currentIP, ttl)
 		if err != nil {
 			log.Error("Failed to update %s: %v", result.record, err)
 			result.err = err
@@ -257,11 +286,13 @@ func updateSingleRecord(cfg *config.Config, record *config.RecordConfig, current
 		result.success = false
 	}
 
-	// 如果成功，更新缓存
+	// 如果成功，更新缓存（使用互斥锁避免竞态条件）
 	if result.success {
+		cacheMu.Lock()
 		if writeErr := config.WriteLastIP(cacheFilePath, currentIP); writeErr != nil {
 			log.Warning("Warning: Failed to write IP to cache: %v", writeErr)
 		}
+		cacheMu.Unlock()
 	}
 
 	return result
@@ -278,6 +309,7 @@ var versionCmd = &cobra.Command{
 func Execute() {
 	runCmd.Flags().StringP("config", "f", "", "配置文件路径 (JSON 格式)")
 	runCmd.Flags().BoolP("ignore-cache", "i", false, "忽略缓存 IP，强制更新")
+	runCmd.Flags().IntP("timeout", "t", 300, "超时时间（秒），默认 300 秒")
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(versionCmd)
 	if err := rootCmd.Execute(); err != nil {

@@ -13,52 +13,8 @@ import (
 	"goddns/internal/log"
 )
 
-// SelectBestIPv6 selects the best IPv6 based on PreferredLft
-func SelectBestIPv6(infos []IPv6Info) (string, error) {
-	candidates := filterValidAddresses(infos)
-
-	if len(candidates) == 0 {
-		return "", errors.New("no suitable DDNS Candidate (Global Unicast, not deprecated) found")
-	}
-
-	var bestCandidate IPv6Info
-	maxPreferredLft := time.Duration(0)
-	for _, info := range candidates {
-		if info.PreferredLft > maxPreferredLft {
-			maxPreferredLft = info.PreferredLft
-			bestCandidate = info
-		}
-	}
-
-	return bestCandidate.IP.String(), nil
-}
-
-// filterValidAddresses centralizes IPv6 candidate filtering.
-func filterValidAddresses(infos []IPv6Info) []IPv6Info {
-	var out []IPv6Info
-	for _, info := range infos {
-		if info.IP == nil {
-			continue
-		}
-		if info.IP.To4() != nil {
-			continue
-		}
-		if info.IP.IsLinkLocalUnicast() || info.IP.IsLoopback() {
-			continue
-		}
-		if info.ValidLft.Seconds() == 0 {
-			continue
-		}
-		// Prefer explicit IsCandidate when present (populated by platform code);
-		// otherwise apply the same rules used by populateInfo.
-		if info.IsCandidate || (info.Scope == "Global Unicast" && !info.IsDeprecated && !info.IsUniqueLocal) {
-			out = append(out, info)
-		}
-	}
-	return out
-}
-
-// GetIPv6FromAPIs queries remote APIs for IPv6 addresses (always direct connection, no proxy)
+// GetIPv6FromAPIs queries remote APIs for IPv6 addresses
+// 始终直连，不使用代理
 func GetIPv6FromAPIs(urls []string, quiet bool) ([]IPv6Info, error) {
 	if len(urls) == 0 {
 		return nil, errors.New("no IP API URL configured")
@@ -242,12 +198,13 @@ func GetIPv6FromAPIs(urls []string, quiet bool) ([]IPv6Info, error) {
 				}
 
 				// Successfully parsed IPv6 address
+				// API 返回的 IP 视为永久有效（静态 IP）
 				info := IPv6Info{
 					IP:           ip,
 					PreferredLft: time.Hour * 24 * 365 * 10,
 					ValidLft:     time.Hour * 24 * 365 * 10,
 				}
-				populateInfo(&info)
+				PopulateInfo(&info)
 
 				if !quiet {
 					log.Info("API %s succeeded: %s", u, ipStr)

@@ -19,84 +19,83 @@ package ifaddr
 
 // 返回值：0=成功有地址，1=接口不存在，2=无全局地址，-1=其他错误
 int get_ipv6info_openbsd(const char *ifname, char *addresses_buf, size_t max_len, int *error_code) {
-    *error_code = 0;
+	*error_code = 0;
 
-    if (if_nametoindex(ifname) == 0) {
-        *error_code = 1;
-        return 1;
-    }
+	if (if_nametoindex(ifname) == 0) {
+		*error_code = 1;
+		return 1;
+	}
 
-    struct ifaddrs *ifap = NULL;
-    if (getifaddrs(&ifap) == -1) {
-        *error_code = -1;
-        return -1;
-    }
+	struct ifaddrs *ifap = NULL;
+	if (getifaddrs(&ifap) == -1) {
+		*error_code = -1;
+		return -1;
+	}
 
-    int s = socket(AF_INET6, SOCK_DGRAM, 0);
-    if (s == -1) {
-        freeifaddrs(ifap);
-        *error_code = -1;
-        return -1;
-    }
+	int s = socket(AF_INET6, SOCK_DGRAM, 0);
+	if (s == -1) {
+		freeifaddrs(ifap);
+		*error_code = -1;
+		return -1;
+	}
 
-    time_t now = time(NULL);
+	time_t now = time(NULL);
 
-    int count = 0;
-    char *ptr = addresses_buf;
-    size_t remain = max_len;
+	int count = 0;
+	char *ptr = addresses_buf;
+	size_t remain = max_len;
 
-    ptr += snprintf(ptr, remain, "[");
-    remain = max_len - (ptr - addresses_buf);
+	ptr += snprintf(ptr, remain, "[");
+	remain = max_len - (ptr - addresses_buf);
 
-    struct ifaddrs *ifa;
-    for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
-        if (ifa->ifa_addr == NULL || strcmp(ifa->ifa_name, ifname) != 0 ||
-            ifa->ifa_addr->sa_family != AF_INET6)
-            continue;
+	struct ifaddrs *ifa;
+	for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr == NULL || strcmp(ifa->ifa_name, ifname) != 0 ||
+			ifa->ifa_addr->sa_family != AF_INET6)
+			continue;
 
-        struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)ifa->ifa_addr;
-        // 注意：这里不排除链路本地地址，让上层过滤
-        char addr_str[INET6_ADDRSTRLEN];
-        if (inet_ntop(AF_INET6, &sin6->sin6_addr, addr_str, sizeof(addr_str)) == NULL)
-            continue;
+		struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)ifa->ifa_addr;
+		char addr_str[INET6_ADDRSTRLEN];
+		if (inet_ntop(AF_INET6, &sin6->sin6_addr, addr_str, sizeof(addr_str)) == NULL)
+			continue;
 
-        struct in6_ifreq ifr6;
-        memset(&ifr6, 0, sizeof(ifr6));
-        strlcpy(ifr6.ifr_name, ifname, IFNAMSIZ);
-        ifr6.ifr_addr = *sin6;
+		struct in6_ifreq ifr6;
+		memset(&ifr6, 0, sizeof(ifr6));
+		strlcpy(ifr6.ifr_name, ifname, IFNAMSIZ);
+		ifr6.ifr_addr = *sin6;
 
-        if (ioctl(s, SIOCGIFALIFETIME_IN6, &ifr6) == -1)
-            continue;
+		if (ioctl(s, SIOCGIFALIFETIME_IN6, &ifr6) == -1)
+			continue;
 
-        struct in6_addrlifetime lt = ifr6.ifr_ifru.ifru_lifetime;
+		struct in6_addrlifetime lt = ifr6.ifr_ifru.ifru_lifetime;
 
-        // Convert to pltime/vltime format
-        unsigned int pltime = (lt.ia6t_preferred != (time_t)-1) ? (unsigned int)(lt.ia6t_preferred - now) : 0xffffffffU;
-        unsigned int vltime = (lt.ia6t_expire != (time_t)-1) ? (unsigned int)(lt.ia6t_expire - now) : 0xffffffffU;
+		// Convert to pltime/vltime format
+		unsigned int pltime = (lt.ia6t_preferred != (time_t)-1) ? (unsigned int)(lt.ia6t_preferred - now) : 0xffffffffU;
+		unsigned int vltime = (lt.ia6t_expire != (time_t)-1) ? (unsigned int)(lt.ia6t_expire - now) : 0xffffffffU;
 
-        if (count > 0) {
-            ptr += snprintf(ptr, remain, ",");
-            remain = max_len - (ptr - addresses_buf);
-        }
+		if (count > 0) {
+			ptr += snprintf(ptr, remain, ",");
+			remain = max_len - (ptr - addresses_buf);
+		}
 
-        ptr += snprintf(ptr, remain,
-            "{\"addr\":\"%s\",\"pltime\":%u,\"vltime\":%u}",
-            addr_str, pltime, vltime);
-        remain = max_len - (ptr - addresses_buf);
-        count++;
-    }
+		ptr += snprintf(ptr, remain,
+			"{\"addr\":\"%s\",\"pltime\":%u,\"vltime\":%u}",
+			addr_str, pltime, vltime);
+		remain = max_len - (ptr - addresses_buf);
+		count++;
+	}
 
-    ptr += snprintf(ptr, remain, "]");
+	ptr += snprintf(ptr, remain, "]");
 
-    close(s);
-    freeifaddrs(ifap);
+	close(s);
+	freeifaddrs(ifap);
 
-    if (count == 0) {
-        *error_code = 2;
-        return 2;
-    }
+	if (count == 0) {
+		*error_code = 2;
+		return 2;
+	}
 
-    return 0;
+	return 0;
 }
 */
 import "C"
@@ -111,8 +110,8 @@ import (
 
 type ioctlAddrInfo struct {
 	Addr   string `json:"addr"`
-	Pltime uint32 `json:"pltime"`  // Preferred lifetime in seconds
-	Vltime uint32 `json:"vltime"`  // Valid lifetime in seconds
+	Pltime uint32 `json:"pltime"` // Preferred lifetime in seconds
+	Vltime uint32 `json:"vltime"` // Valid lifetime in seconds
 }
 
 // GetAvailableIPv6 uses ioctl to get IPv6 info on OpenBSD
@@ -139,16 +138,12 @@ func GetAvailableIPv6(ifaceName string) ([]IPv6Info, error) {
 		var infos []IPv6Info
 		for _, a := range addrs {
 			ip := net.ParseIP(a.Addr)
-			if ip == nil || ip.To4() != nil {
-				continue
-			}
-
 			info := IPv6Info{
 				IP:           ip,
 				PreferredLft: time.Duration(a.Pltime) * time.Second,
 				ValidLft:     time.Duration(a.Vltime) * time.Second,
 			}
-			populateInfo(&info)
+			PopulateInfo(&info)
 			infos = append(infos, info)
 		}
 

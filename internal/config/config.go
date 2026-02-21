@@ -14,7 +14,6 @@ import (
 // IPSource source for obtaining IP
 type IPSource struct {
 	Interface string   `json:"interface,omitempty"`
-	URL       string   `json:"url,omitempty"`  // 保持向后兼容性
 	URLs      []string `json:"urls,omitempty"` // 支持多个 URL
 }
 
@@ -34,29 +33,23 @@ type CloudflareRecord struct {
 	TTL      int    `json:"ttl,omitempty"`
 }
 
-// AliyunRecord Aliyun provider specific settings (demo purpose)
+// AliyunRecord Aliyun provider specific settings
 type AliyunRecord struct {
-	AccessKey    string `json:"access_key"`
-	AccessSecret string `json:"access_secret"`
+	AccessKeyID     string `json:"access_key_id"`
+	AccessKeySecret string `json:"access_key_secret"`
+	TTL             int    `json:"ttl,omitempty"`
 }
 
 // RecordConfig single DNS record configuration
 type RecordConfig struct {
-	Provider string `json:"provider"`
-	Zone     string `json:"zone"`
-	Record   string `json:"record"`
-	TTL      int    `json:"ttl,omitempty"`
-	Proxied  bool   `json:"proxied,omitempty"` // Cloudflare only
-	UseProxy bool   `json:"use_proxy,omitempty"`
-
-	// Provider specific credentials
+	Provider   string            `json:"provider"`
+	Zone       string            `json:"zone"`
+	Record     string            `json:"record"`
+	TTL        int               `json:"ttl,omitempty"`
+	Proxied    bool              `json:"proxied,omitempty"` // Cloudflare only
+	UseProxy   bool              `json:"use_proxy,omitempty"`
 	Cloudflare *CloudflareRecord `json:"cloudflare,omitempty"`
 	Aliyun     *AliyunRecord     `json:"aliyun,omitempty"`
-
-	// Legacy fields for backward compatibility
-	APIToken     string `json:"api_token,omitempty"`     // Cloudflare
-	AccessKey    string `json:"access_key,omitempty"`    // Aliyun
-	AccessSecret string `json:"access_secret,omitempty"` // Aliyun
 }
 
 // Config main configuration structure
@@ -65,30 +58,7 @@ type Config struct {
 	Records []RecordConfig `json:"records"`
 }
 
-// LegacyConfig old configuration structure for migration
-type LegacyConfig struct {
-	Provider        string `json:"provider"`
-	GetIP           IPSource `json:"get_ip"`
-	WorkDir         string `json:"work_dir"`
-	Proxy           string           `json:"proxy,omitempty"`
-	LogOutput       string           `json:"log_output,omitempty"`
-	Cloudflare      CloudflareConfig `json:"provider_options,omitempty"`
-	ProviderOptions json.RawMessage  `json:"provider_options,omitempty"`
-}
-
-// CloudflareConfig legacy Cloudflare config structure
-type CloudflareConfig struct {
-	APIToken string `json:"api_token"`
-	ZoneID   string `json:"zone_id,omitempty"`
-	Proxied  bool   `json:"proxied"`
-	TTL      int    `json:"ttl"`
-	Domain   struct {
-		Zone   string `json:"zone"`
-		Record string `json:"record"`
-	} `json:"domain"`
-}
-
-// ReadConfig reads and validates config, supports both new and legacy formats
+// ReadConfig reads and validates config
 func ReadConfig(path string, quiet bool) (*Config, string) {
 	configFile, err := filepath.Abs(path)
 	if err != nil {
@@ -102,34 +72,16 @@ func ReadConfig(path string, quiet bool) (*Config, string) {
 		return nil, ""
 	}
 
-	// 尝试解析为新格式
 	var config Config
-	if err := json.Unmarshal(data, &config); err == nil && config.Records != nil {
-		// 新格式，验证配置
-		if err := validateConfig(&config); err != nil {
-			log.Error("Invalid config: %v", err)
-			return nil, ""
-		}
-		return &config, configFile
-	}
-
-	// 回退到旧格式迁移
-	legacyConfig, err := migrateLegacyConfig(data)
-	if err != nil {
-		log.Error("Failed to parse config (neither new nor legacy format): %v", err)
+	if err := json.Unmarshal(data, &config); err != nil {
+		log.Error("Failed to parse config: %v", err)
 		return nil, ""
 	}
 
-	// 自动迁移旧配置到新格式
-	config = *legacyConfigToNew(legacyConfig)
+	// 验证配置
 	if err := validateConfig(&config); err != nil {
-		log.Error("Migrated config validation failed: %v", err)
+		log.Error("Invalid config: %v", err)
 		return nil, ""
-	}
-
-	// 询问用户是否要迁移配置文件（静默模式下自动迁移）
-	if !quiet {
-		log.Info("Legacy config detected. Consider migrating to new format.")
 	}
 
 	return &config, configFile
@@ -143,7 +95,7 @@ func validateConfig(cfg *Config) error {
 
 	// 检查 IP 源配置
 	hasInterface := cfg.General.GetIP.Interface != ""
-	hasURL := cfg.General.GetIP.URL != "" || len(cfg.General.GetIP.URLs) > 0
+	hasURL := len(cfg.General.GetIP.URLs) > 0
 	if !hasInterface && !hasURL {
 		return fmt.Errorf("either 'get_ip.interface' or 'get_ip.urls' must be configured")
 	}
@@ -175,26 +127,12 @@ func validateConfig(cfg *Config) error {
 		// 验证凭证
 		switch record.Provider {
 		case "cloudflare":
-			token := record.APIToken
-			if record.Cloudflare != nil && record.Cloudflare.APIToken != "" {
-				token = record.Cloudflare.APIToken
-			}
-			if token == "" {
-				return fmt.Errorf("record[%d]: cloudflare api_token is required", i)
+			if record.Cloudflare == nil || record.Cloudflare.APIToken == "" {
+				return fmt.Errorf("record[%d]: cloudflare.api_token is required", i)
 			}
 		case "aliyun":
-			key := record.AccessKey
-			secret := record.AccessSecret
-			if record.Aliyun != nil {
-				if record.Aliyun.AccessKey != "" {
-					key = record.Aliyun.AccessKey
-				}
-				if record.Aliyun.AccessSecret != "" {
-					secret = record.Aliyun.AccessSecret
-				}
-			}
-			if key == "" || secret == "" {
-				return fmt.Errorf("record[%d]: aliyun access_key and access_secret are required", i)
+			if record.Aliyun == nil || record.Aliyun.AccessKeyID == "" || record.Aliyun.AccessKeySecret == "" {
+				return fmt.Errorf("record[%d]: aliyun access_key_id and access_key_secret are required", i)
 			}
 		default:
 			return fmt.Errorf("record[%d]: unsupported provider '%s'", i, record.Provider)
@@ -218,51 +156,6 @@ func validateProxyURL(proxyURL string) error {
 		return fmt.Errorf("unsupported proxy scheme '%s'", scheme)
 	}
 	return nil
-}
-
-// migrateLegacyConfig migrates legacy config to new format
-func migrateLegacyConfig(data []byte) (*LegacyConfig, error) {
-	var legacy LegacyConfig
-	if err := json.Unmarshal(data, &legacy); err != nil {
-		return nil, err
-	}
-
-	if legacy.Provider == "" || legacy.Provider != "cloudflare" {
-		return nil, fmt.Errorf("only 'cloudflare' provider is supported in legacy format")
-	}
-
-	return &legacy, nil
-}
-
-// legacyConfigToNew converts legacy config to new format
-func legacyConfigToNew(legacy *LegacyConfig) *Config {
-	ttl := legacy.Cloudflare.TTL
-	if ttl == 0 {
-		ttl = 180
-	}
-
-	return &Config{
-		General: GeneralConfig{
-			GetIP:     legacy.GetIP,
-			WorkDir:   legacy.WorkDir,
-			LogOutput: legacy.LogOutput,
-			Proxy:     legacy.Proxy,
-		},
-		Records: []RecordConfig{
-			{
-				Provider: "cloudflare",
-				Zone:     legacy.Cloudflare.Domain.Zone,
-				Record:   legacy.Cloudflare.Domain.Record,
-				TTL:      ttl,
-				Proxied:  legacy.Cloudflare.Proxied,
-				UseProxy: legacy.Proxy != "",
-				Cloudflare: &CloudflareRecord{
-					APIToken: legacy.Cloudflare.APIToken,
-					ZoneID:   legacy.Cloudflare.ZoneID,
-				},
-			},
-		},
-	}
 }
 
 // WriteConfig writes config to the given path

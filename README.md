@@ -9,21 +9,21 @@
 ### 主要变化
 
 - ✅ **多域名支持**：一条配置可更新多个 DNS 记录
-- ✅ **多服务商架构**：支持 Cloudflare、阿里云等（阿里云为演示用）
+- ✅ **多服务商支持**：支持 Cloudflare、阿里云 DNS
 - ✅ **记录级代理控制**：每个记录可独立配置是否使用代理
 - ✅ **get_ip 直连**：IP 获取功能始终直连，不受代理影响
-- ✅ **配置迁移**：自动兼容旧版配置格式
 - ✅ **并发更新**：多个域名并行更新，提高效率
 
 ## 平台支持说明
 - **多平台适配**：Linux 使用 netlink，FreeBSD/openBSD 使用 ioctl。
-- **macOS 支持说明**：由于手头没有 mac 设备进行测试，暂时未支持 macOS，欢迎有能力的开发者提交 PR 以完善 macOS 兼容性。
+- **macOS 支持说明**：由于没有 mac 设备进行测试，暂时未支持 macOS，欢迎有能力的开发者提交 PR 以完善 macOS 兼容性。
 
 ## 特性
 - **多域名支持**：单次运行可更新多个 DNS 记录
 - **Cloudflare 集成**：自动更新 Cloudflare DNS 记录
+- **阿里云 DNS**：自动更新阿里云 DNS 记录
 - **IPv6 支持**：原生支持 IPv6，支持多平台接口获取
-- **代理支持**：支持 HTTP(S)/SOCKS5 代理，支持记录级控制
+- **代理支持**：支持 HTTP(S)/SOCKS5 代理，支持记录级控制（仅 Cloudflare）
 - **IP 缓存**：避免重复 API 调用
 - **彩色日志**：终端下日志分级彩色显示，支持文件输出
 - **配置灵活**：JSON 配置，模块化设计
@@ -65,7 +65,7 @@ chmod +x build.sh
 ./goddns version
 ```
 
-## 配置示例（新格式 v2.0）
+## 配置示例
 
 ```json
 {
@@ -78,7 +78,7 @@ chmod +x build.sh
             ]
         },
         "work_dir": "/var/lib/goddns",
-        "log_output": "/var/log/goddns.log",
+        "log_output": "shell",
         "proxy": ""
     },
     "records": [
@@ -90,20 +90,19 @@ chmod +x build.sh
             "proxied": false,
             "use_proxy": false,
             "cloudflare": {
-                "api_token": "YOUR_API_TOKEN",
+                "api_token": "YOUR_CLOUDFLARE_API_TOKEN",
                 "zone_id": ""
             }
         },
         {
-            "provider": "cloudflare",
-            "zone": "another.com",
+            "provider": "aliyun",
+            "zone": "example.cn",
             "record": "www",
-            "ttl": 300,
-            "proxied": true,
+            "ttl": 600,
             "use_proxy": false,
-            "cloudflare": {
-                "api_token": "YOUR_API_TOKEN",
-                "zone_id": ""
+            "aliyun": {
+                "access_key_id": "YOUR_ACCESS_KEY_ID",
+                "access_key_secret": "YOUR_ACCESS_KEY_SECRET"
             }
         }
     ]
@@ -126,52 +125,50 @@ chmod +x build.sh
 
 | 字段 | 说明 |
 |------|------|
-| `provider` | DNS 服务商，目前支持 `cloudflare` |
+| `provider` | DNS 服务商，支持 `cloudflare` 或 `aliyun` |
 | `zone` | 主域名（如 `example.com`） |
-| `record` | 子域名/记录名（如 `dev`、`www`） |
-| `ttl` | DNS 记录 TTL（可选，默认 180） |
-| `proxied` | Cloudflare 代理模式（可选，默认 false） |
-| `use_proxy` | 是否使用全局代理（可选，默认 false） |
+| `record` | 子域名/记录名（如 `dev`、`www`、`@`） |
+| `ttl` | DNS 记录 TTL（可选） |
+| `proxied` | Cloudflare 代理模式（可选，默认 false，仅 Cloudflare） |
+| `use_proxy` | 是否使用全局代理（可选，默认 false，仅 Cloudflare） |
+
+### Cloudflare 配置
+
+| 字段 | 说明 |
+|------|------|
 | `cloudflare.api_token` | Cloudflare API Token |
 | `cloudflare.zone_id` | Cloudflare Zone ID（可选，留空自动获取） |
+| `cloudflare.ttl` | TTL（可选，覆盖记录级 ttl） |
+| `cloudflare.proxied` | 代理模式（可选，覆盖记录级 proxied） |
 
-## 旧配置格式迁移
+### 阿里云配置
 
-v2.0 会自动检测并迁移旧版配置格式。旧格式：
+| 字段 | 说明 |
+|------|------|
+| `aliyun.access_key_id` | 阿里云 AccessKey ID |
+| `aliyun.access_key_secret` | 阿里云 AccessKey Secret |
+| `aliyun.ttl` | TTL（可选，覆盖记录级 ttl） |
 
-```json
-{
-    "provider": "cloudflare",
-    "get_ip": {
-        "interface": "enp6s18",
-        "urls": ["https://ipv6.icanhazip.com"]
-    },
-    "work_dir": "/var/lib/goddns",
-    "proxy": "",
-    "provider_options": {
-        "api_token": "YOUR_TOKEN",
-        "zone_id": "YOUR_ZONE_ID",
-        "proxied": false,
-        "ttl": 180,
-        "domain": {
-            "zone": "example.com",
-            "record": "dev"
-        }
-    }
-}
-```
+## 服务商对比
 
-程序会自动将其转换为新格式并运行。
+| 特性 | Cloudflare | 阿里云 |
+|------|------------|--------|
+| IPv6 支持 | ✅ | ✅ |
+| 代理支持 | ✅ | ❌ |
+| 自动获取 ZoneID | ✅ | ✅ |
+| API 认证 | API Token | AccessKey |
 
 ## 代理说明
 
 - **get_ip 始终直连**：获取 IP 地址时不使用代理
 - **记录级代理控制**：每个 DNS 记录可独立配置 `use_proxy`
+- **仅 Cloudflare 支持代理**：阿里云 DNS API 不支持代理
 - **代理优先级**：记录级 `use_proxy: true` + 全局 `proxy` 配置
 
 ## 自动运行
 
 ### systemd 定时
+创建 `/etc/systemd/system/goddns.service`：
 ```ini
 [Unit]
 Description=Dynamic DNS client for GodDNS
@@ -184,6 +181,7 @@ User=nobody
 Group=nogroup
 ```
 
+创建 `/etc/systemd/system/goddns.timer`：
 ```ini
 [Unit]
 Description=Run goddns every 5 minutes
@@ -197,6 +195,7 @@ Persistent=true
 WantedBy=timers.target
 ```
 
+启用：
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now goddns.timer
@@ -220,7 +219,8 @@ goddns/
 │   ├── log/              # 日志系统
 │   ├── platform/ifaddr/  # 平台相关网络工具
 │   └── provider/         # DNS 服务商实现
-│       └── cloudflare/
+│       ├── cloudflare/   # Cloudflare API
+│       └── aliyun/       # 阿里云 DNS API
 └── config.example.json   # 配置示例
 ```
 

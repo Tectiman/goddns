@@ -14,12 +14,27 @@ import (
 
 	xnet "golang.org/x/net/proxy"
 
-	"goddns/internal/config"
+	"goddns/internal/log"
 )
 
 // CloudflareProvider implements Cloudflare-specific logic
 type CloudflareProvider struct {
-	Config config.Config
+	config   Config
+	apiToken string
+}
+
+// Config minimal config interface for Cloudflare provider
+type Config interface {
+	GetProxy() string
+}
+
+// SimpleConfig simple config implementation
+type SimpleConfig struct {
+	Proxy string
+}
+
+func (c *SimpleConfig) GetProxy() string {
+	return c.Proxy
 }
 
 const (
@@ -29,9 +44,12 @@ const (
 	baseDelay      = 1 * time.Second
 )
 
-// NewProvider constructor
-func NewProvider(cfg config.Config) *CloudflareProvider {
-	return &CloudflareProvider{Config: cfg}
+// NewProvider constructor with apiToken
+func NewProvider(cfg Config, apiToken string) *CloudflareProvider {
+	return &CloudflareProvider{
+		config:   cfg,
+		apiToken: apiToken,
+	}
 }
 
 // cfRequest with retry
@@ -48,26 +66,28 @@ func (p *CloudflareProvider) cfRequest(method string, endpoint string, data inte
 			return nil, err
 		}
 
-		req.Header.Set("Authorization", "Bearer "+p.Config.Cloudflare.APIToken)
+		req.Header.Set("Authorization", "Bearer "+p.apiToken)
 		req.Header.Set("Content-Type", "application/json")
 
 		transport := &http.Transport{}
-		if p.Config.Proxy != "" {
-			u, err := url.Parse(p.Config.Proxy)
-			if err != nil || u.Scheme == "" {
-				return nil, fmt.Errorf("invalid proxy URL '%s': must include scheme (e.g. 'http://', 'https://', 'socks5://')", p.Config.Proxy)
+
+		// Use proxy if configured
+		if p.config != nil && p.config.GetProxy() != "" {
+			proxyURL, err := url.Parse(p.config.GetProxy())
+			if err != nil {
+				return nil, fmt.Errorf("invalid proxy URL '%s': %w", p.config.GetProxy(), err)
 			}
 
-			switch strings.ToLower(u.Scheme) {
+			switch strings.ToLower(proxyURL.Scheme) {
 			case "http", "https":
-				transport.Proxy = http.ProxyURL(u)
+				transport.Proxy = http.ProxyURL(proxyURL)
 			case "socks5", "socks5h":
 				var auth *xnet.Auth
-				if u.User != nil {
-					pw, _ := u.User.Password()
-					auth = &xnet.Auth{User: u.User.Username(), Password: pw}
+				if proxyURL.User != nil {
+					pw, _ := proxyURL.User.Password()
+					auth = &xnet.Auth{User: proxyURL.User.Username(), Password: pw}
 				}
-				dialer, err := xnet.SOCKS5("tcp", u.Host, auth, xnet.Direct)
+				dialer, err := xnet.SOCKS5("tcp", proxyURL.Host, auth, xnet.Direct)
 				if err != nil {
 					return nil, fmt.Errorf("failed to create socks5 dialer: %w", err)
 				}
@@ -75,9 +95,10 @@ func (p *CloudflareProvider) cfRequest(method string, endpoint string, data inte
 					return dialer.Dial(network, addr)
 				}
 			default:
-				return nil, fmt.Errorf("unsupported proxy scheme '%s' in proxy url", u.Scheme)
+				return nil, fmt.Errorf("unsupported proxy scheme '%s'", proxyURL.Scheme)
 			}
 		}
+
 		client := &http.Client{Timeout: 15 * time.Second, Transport: transport}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -99,9 +120,9 @@ func (p *CloudflareProvider) cfRequest(method string, endpoint string, data inte
 	return nil, fmt.Errorf("max retries exceeded")
 }
 
-// GetZoneID returns the Cloudflare Zone ID for the configured zone
-func (p *CloudflareProvider) GetZoneID(cfg config.Config) (string, error) {
-	reqURL := zonesEndpoint + "?name=" + cfg.Cloudflare.Domain.Zone
+// GetZoneID returns the Cloudflare Zone ID for the given zone name
+func (p *CloudflareProvider) GetZoneID(zoneName string) (string, error) {
+	reqURL := zonesEndpoint + "?name=" + zoneName
 	resp, err := p.cfRequest("GET", reqURL, nil)
 	if err != nil {
 		return "", err
@@ -128,15 +149,15 @@ func (p *CloudflareProvider) GetZoneID(cfg config.Config) (string, error) {
 		if len(result.Errors) > 0 {
 			errMsg = fmt.Sprintf("Code %d: %s", result.Errors[0].Code, result.Errors[0].Message)
 		}
-		return "", fmt.Errorf("failed to find zone %s. API error: %s", cfg.Cloudflare.Domain.Zone, errMsg)
+		return "", fmt.Errorf("failed to find zone %s. API error: %s", zoneName, errMsg)
 	}
 
 	return result.Result[0].ID, nil
 }
 
-// UpsertDNSRecord creates or updates the DNS record
-func (p *CloudflareProvider) UpsertDNSRecord(cfg config.Config, ip string, zoneID string) (bool, error) {
-	fqdn := cfg.Cloudflare.Domain.Record + "." + cfg.Cloudflare.Domain.Zone
+// UpsertDNSRecord creates or updates a DNS record
+func (p *CloudflareProvider) UpsertDNSRecord(zoneName, recordName, ip, zoneID string, ttl int, proxied bool) (bool, error) {
+	fqdn := recordName + "." + zoneName
 	recordType := "AAAA"
 
 	searchURL := fmt.Sprintf("%s/%s/dns_records?type=%s&name=%s", zonesEndpoint, zoneID, recordType, fqdn)
@@ -171,15 +192,17 @@ func (p *CloudflareProvider) UpsertDNSRecord(cfg config.Config, ip string, zoneI
 		"type":    recordType,
 		"name":    fqdn,
 		"content": ip,
-		"ttl":     cfg.Cloudflare.TTL,
-		"proxied": cfg.Cloudflare.Proxied,
+		"ttl":     ttl,
+		"proxied": proxied,
 	}
 
 	var method, apiEndpoint string
 
 	if len(searchResult.Result) > 0 {
 		existing := searchResult.Result[0]
-		if existing.Content == ip && existing.Proxied == cfg.Cloudflare.Proxied && existing.TTL == cfg.Cloudflare.TTL {
+		// Check if update is needed
+		if existing.Content == ip && existing.Proxied == proxied && existing.TTL == ttl {
+			log.Info("DNS record %s is up to date, no update needed", fqdn)
 			return true, nil
 		}
 		recordID := existing.ID

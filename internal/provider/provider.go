@@ -18,3 +18,12 @@ type ProviderFactory func(config map[string]interface{}) (Provider, error)
 
 // RecordExtra represents provider-specific extra parameters
 type RecordExtra map[string]interface{}
+
+// ProxySupporter is an optional interface for providers that support proxy
+type ProxySupporter interface {
+	// SetProxy sets the proxy URL for the provider
+	SetProxy(proxyURL string) error
+	
+	// GetProxy returns the current proxy URL
+	GetProxy() string
+}

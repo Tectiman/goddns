@@ -90,8 +90,8 @@ chmod +x build.sh
             "proxied": false,
             "use_proxy": false,
             "cloudflare": {
-                "api_token": "YOUR_CLOUDFLARE_API_TOKEN",
-                "zone_id": ""
+                "api_token": "${CLOUDFLARE_API_TOKEN}",
+                "zone_id": "${CLOUDFLARE_ZONE_ID:-}"
             }
         },
         {
@@ -101,13 +101,69 @@ chmod +x build.sh
             "ttl": 600,
             "use_proxy": false,
             "aliyun": {
-                "access_key_id": "YOUR_ACCESS_KEY_ID",
-                "access_key_secret": "YOUR_ACCESS_KEY_SECRET"
+                "access_key_id": "${ALIYUN_ACCESS_KEY_ID}",
+                "access_key_secret": "${ALIYUN_ACCESS_KEY_SECRET}"
             }
         }
     ]
 }
 ```
+
+## 环境变量
+
+goddns 支持使用环境变量配置敏感信息，推荐在生产环境中使用。
+
+### 支持的环境变量
+
+| 变量名 | 说明 | 示例 |
+|--------|------|------|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API Token | `your_api_token_here` |
+| `CLOUDFLARE_ZONE_ID` | Cloudflare Zone ID（可选） | `abc123xyz` |
+| `ALIYUN_ACCESS_KEY_ID` | 阿里云 AccessKey ID | `LTAI1234567890` |
+| `ALIYUN_ACCESS_KEY_SECRET` | 阿里云 AccessKey Secret | `your_secret_here` |
+
+### 使用方式
+
+在配置文件中引用环境变量：
+
+```json
+{
+    "records": [
+        {
+            "provider": "cloudflare",
+            "cloudflare": {
+                "api_token": "${CLOUDFLARE_API_TOKEN}"
+            }
+        }
+    ]
+}
+```
+
+运行前设置环境变量：
+
+```bash
+# 设置环境变量
+export CLOUDFLARE_API_TOKEN="your_token_here"
+export ALIYUN_ACCESS_KEY_ID="LTAI1234567890"
+export ALIYUN_ACCESS_KEY_SECRET="your_secret_here"
+
+# 运行 goddns
+./goddns run -f config.json
+```
+
+### 环境变量默认值
+
+支持设置默认值（当环境变量未设置时使用默认值）：
+
+```json
+{
+    "cloudflare": {
+        "zone_id": "${CLOUDFLARE_ZONE_ID:-}"
+    }
+}
+```
+
+`${VAR:-default}` - 如果 VAR 未设置，使用 default 值
 
 ## 配置字段说明
 
@@ -168,6 +224,9 @@ chmod +x build.sh
 ## 自动运行
 
 ### systemd 定时
+
+#### 方式一：在配置文件中引用环境变量
+
 创建 `/etc/systemd/system/goddns.service`：
 ```ini
 [Unit]
@@ -179,6 +238,39 @@ Type=oneshot
 ExecStart=/usr/local/bin/goddns run -f /etc/goddns/config.json
 User=nobody
 Group=nogroup
+Environment="CLOUDFLARE_API_TOKEN=your_token_here"
+Environment="ALIYUN_ACCESS_KEY_ID=LTAI1234567890"
+Environment="ALIYUN_ACCESS_KEY_SECRET=your_secret_here"
+```
+
+#### 方式二：使用 EnvironmentFile（推荐）
+
+创建 `/etc/goddns/goddns.env`：
+```bash
+# /etc/goddns/goddns.env
+CLOUDFLARE_API_TOKEN="your_token_here"
+CLOUDFLARE_ZONE_ID=""
+ALIYUN_ACCESS_KEY_ID="LTAI1234567890"
+ALIYUN_ACCESS_KEY_SECRET="your_secret_here"
+```
+
+设置文件权限（仅 root 可读）：
+```bash
+chmod 600 /etc/goddns/goddns.env
+```
+
+创建 `/etc/systemd/system/goddns.service`：
+```ini
+[Unit]
+Description=Dynamic DNS client for GodDNS
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/goddns run -f /etc/goddns/config.json
+User=nobody
+Group=nogroup
+EnvironmentFile=/etc/goddns/goddns.env
 ```
 
 创建 `/etc/systemd/system/goddns.timer`：
@@ -202,11 +294,62 @@ sudo systemctl enable --now goddns.timer
 ```
 
 ### cron 定时
+
+#### 方式一：在 crontab 中设置环境变量
+
+```bash
+crontab -e
+
+# 添加环境变量和任务
+CLOUDFLARE_API_TOKEN="your_token_here"
+ALIYUN_ACCESS_KEY_ID="LTAI1234567890"
+ALIYUN_ACCESS_KEY_SECRET="your_secret_here"
+
+*/5 * * * * /usr/local/bin/goddns run -f /etc/goddns/config.json >> /var/log/goddns-cron.log 2>&1
+```
+
+#### 方式二：使用脚本加载环境变量（推荐）
+
+创建 `/etc/goddns/run-goddns.sh`：
+```bash
+#!/bin/bash
+# /etc/goddns/run-goddns.sh
+
+# 加载环境变量文件
+if [ -f /etc/goddns/goddns.env ]; then
+    set -a
+    source /etc/goddns/goddns.env
+    set +a
+fi
+
+# 运行 goddns
+/usr/local/bin/goddns run -f /etc/goddns/config.json
+```
+
+设置脚本权限：
+```bash
+chmod +x /etc/goddns/run-goddns.sh
+```
+
+配置 crontab：
 ```bash
 crontab -e
 # 添加：
-*/5 * * * * /usr/local/bin/goddns run -f /etc/goddns/config.json >> /var/log/goddns-cron.log 2>&1
+*/5 * * * * /etc/goddns/run-goddns.sh >> /var/log/goddns-cron.log 2>&1
 ```
+
+#### 方式三：直接在 crontab 中使用 env 命令
+
+```bash
+crontab -e
+# 添加：
+*/5 * * * * env CLOUDFLARE_API_TOKEN="your_token" /usr/local/bin/goddns run -f /etc/goddns/config.json >> /var/log/goddns-cron.log 2>&1
+```
+
+> **注意**：cron 环境与交互式 shell 不同，可能需要：
+> - 使用绝对路径
+> - 在脚本中设置 `PATH` 环境变量
+> - 确保环境变量文件权限正确（`chmod 600`）
 
 ## 目录结构
 ```

@@ -19,6 +19,8 @@ import (
 type CloudflareProvider struct {
 	config   Config
 	apiToken string
+	proxyURL string
+	client   *http.Client
 }
 
 // Config minimal config interface for Cloudflare provider
@@ -44,43 +46,27 @@ const (
 
 // NewProvider constructor with apiToken
 func NewProvider(cfg Config, apiToken string) *CloudflareProvider {
-	return &CloudflareProvider{
+	p := &CloudflareProvider{
 		config:   cfg,
 		apiToken: apiToken,
 	}
+	// 保存 proxyURL 以便 GetProxy 返回
+	if cfg != nil {
+		p.proxyURL = cfg.GetProxy()
+	}
+	p.client = p.createHTTPClient()
+	return p
 }
 
-// Name returns the provider name
-func (p *CloudflareProvider) Name() string {
-	return "cloudflare"
-}
-
-// cfRequest with retry
-func (p *CloudflareProvider) cfRequest(ctx context.Context, method string, endpoint string, data interface{}) (*http.Response, error) {
-	var body io.Reader
-	if data != nil {
-		jsonBody, _ := json.Marshal(data)
-		body = bytes.NewBuffer(jsonBody)
+// createHTTPClient creates (or recreates) an HTTP client with optional proxy settings.
+func (p *CloudflareProvider) createHTTPClient() *http.Client {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
 	}
 
-	for attempt := 0; attempt <= defaultRetries; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Authorization", "Bearer "+p.apiToken)
-		req.Header.Set("Content-Type", "application/json")
-
-		transport := &http.Transport{}
-
-		// Use proxy if configured
-		if p.config != nil && p.config.GetProxy() != "" {
-			proxyURL, err := url.Parse(p.config.GetProxy())
-			if err != nil {
-				return nil, fmt.Errorf("invalid proxy URL '%s': %w", p.config.GetProxy(), err)
-			}
-
+	if p.config != nil && p.config.GetProxy() != "" {
+		proxyURL, err := url.Parse(p.config.GetProxy())
+		if err == nil {
 			switch strings.ToLower(proxyURL.Scheme) {
 			case "http", "https":
 				transport.Proxy = http.ProxyURL(proxyURL)
@@ -91,19 +77,76 @@ func (p *CloudflareProvider) cfRequest(ctx context.Context, method string, endpo
 					auth = &xnet.Auth{User: proxyURL.User.Username(), Password: pw}
 				}
 				dialer, err := xnet.SOCKS5("tcp", proxyURL.Host, auth, xnet.Direct)
-				if err != nil {
-					return nil, fmt.Errorf("failed to create socks5 dialer: %w", err)
+				if err == nil {
+					transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+						return dialer.Dial(network, addr)
+					}
 				}
-				transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-					return dialer.Dial(network, addr)
-				}
-			default:
-				return nil, fmt.Errorf("unsupported proxy scheme '%s'", proxyURL.Scheme)
 			}
 		}
+	}
 
-		client := &http.Client{Timeout: 15 * time.Second, Transport: transport}
-		resp, err := client.Do(req)
+	return &http.Client{Timeout: 15 * time.Second, Transport: transport}
+}
+
+// Name returns the provider name
+func (p *CloudflareProvider) Name() string {
+	return "cloudflare"
+}
+
+// SetProxy sets the proxy URL for the provider
+func (p *CloudflareProvider) SetProxy(proxyURL string) error {
+	p.proxyURL = proxyURL
+	// 同时更新 config 中的 proxy
+	if p.config == nil {
+		p.config = &SimpleConfig{Proxy: proxyURL}
+	} else {
+		// 如果 config 是 SimpleConfig 类型，更新它
+		if sc, ok := p.config.(*SimpleConfig); ok {
+			sc.Proxy = proxyURL
+		}
+	}
+	// Recreate HTTP client to apply new proxy settings
+	p.client = p.createHTTPClient()
+	return nil
+}
+
+// GetProxy returns the current proxy URL
+func (p *CloudflareProvider) GetProxy() string {
+	return p.proxyURL
+}
+
+// cfRequest with retry
+func (p *CloudflareProvider) cfRequest(ctx context.Context, method string, endpoint string, data interface{}) (*http.Response, error) {
+	var jsonBody []byte
+	if data != nil {
+		var err error
+		jsonBody, err = json.Marshal(data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request data: %w", err)
+		}
+	}
+
+	// Ensure client is initialized (especially if proxy was updated via SetProxy)
+	if p.client == nil {
+		p.client = p.createHTTPClient()
+	}
+
+	for attempt := 0; attempt <= defaultRetries; attempt++ {
+		var body io.Reader
+		if jsonBody != nil {
+			body = bytes.NewReader(jsonBody)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Authorization", "Bearer "+p.apiToken)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := p.client.Do(req)
 		if err != nil {
 			if attempt == defaultRetries {
 				return nil, fmt.Errorf("API request failed after %d retries: %w", defaultRetries, err)
@@ -159,9 +202,16 @@ func (p *CloudflareProvider) GetZoneID(ctx context.Context, zoneName string) (st
 }
 
 // UpsertRecord creates or updates a DNS record
-func (p *CloudflareProvider) UpsertRecord(ctx context.Context, zoneName, recordName, ip, zoneID string, ttl int, extra map[string]interface{}) (bool, error) {
+// zoneID should be passed in the extra map as "zoneID"
+func (p *CloudflareProvider) UpsertRecord(ctx context.Context, zoneName, recordName, ip string, ttl int, extra map[string]interface{}) (bool, error) {
 	fqdn := recordName + "." + zoneName
 	recordType := "AAAA"
+
+	// Get zoneID from extra params
+	zoneID, ok := extra["zoneID"].(string)
+	if !ok || zoneID == "" {
+		return false, fmt.Errorf("zoneID is required in extra parameters")
+	}
 
 	// Get proxied from extra params
 	proxied := false
@@ -250,8 +300,8 @@ func (p *CloudflareProvider) UpsertRecord(ctx context.Context, zoneName, recordN
 // UpsertDNSRecord is a wrapper for backward compatibility
 func (p *CloudflareProvider) UpsertDNSRecord(zoneName, recordName, ip, zoneID string, ttl int, proxied bool) (bool, error) {
 	ctx := context.Background()
-	extra := map[string]interface{}{"proxied": proxied}
-	return p.UpsertRecord(ctx, zoneName, recordName, ip, zoneID, ttl, extra)
+	extra := map[string]interface{}{"proxied": proxied, "zoneID": zoneID}
+	return p.UpsertRecord(ctx, zoneName, recordName, ip, ttl, extra)
 }
 
 // GetZoneID is a wrapper for backward compatibility

@@ -20,6 +20,7 @@ import (
 type AliyunProvider struct {
 	accessKeyID     string
 	accessKeySecret string
+	proxyURL        string // 阿里云不支持代理，但保留字段以满足接口
 }
 
 const (
@@ -40,6 +41,21 @@ func NewProvider(accessKeyID, accessKeySecret string) *AliyunProvider {
 // Name returns the provider name
 func (p *AliyunProvider) Name() string {
 	return "aliyun"
+}
+
+// SetProxy sets the proxy URL for the provider
+// Note: Aliyun provider does not support proxy, this is a no-op
+func (p *AliyunProvider) SetProxy(proxyURL string) error {
+	if proxyURL != "" {
+		// 记录警告，但不返回错误
+		p.proxyURL = proxyURL
+	}
+	return nil
+}
+
+// GetProxy returns the current proxy URL (always empty for Aliyun)
+func (p *AliyunProvider) GetProxy() string {
+	return ""
 }
 
 // sign creates the HMAC-SHA1 signature

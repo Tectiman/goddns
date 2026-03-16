@@ -49,7 +49,7 @@ func PopulateInfo(info *IPv6Info) {
 		info.AddressState = "Preferred/Static"
 	}
 
-	info.IsCandidate = info.Scope == "Global Unicast" && !info.IsDeprecated && !info.IsUniqueLocal
+	info.IsCandidate = info.Scope == "Global Unicast" && !info.IsDeprecated && !info.IsUniqueLocal && info.ValidLft.Seconds() > 0
 }
 
 // IsPrivateOrLocalIP returns true for non-global addresses

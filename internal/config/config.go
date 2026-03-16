@@ -78,6 +78,9 @@ func ReadConfig(path string, quiet bool) (*Config, string) {
 		return nil, ""
 	}
 
+	// 扩展环境变量
+	expandConfigEnvVars(&config)
+
 	// 验证配置
 	if err := validateConfig(&config); err != nil {
 		log.Error("Invalid config: %v", err)
@@ -85,6 +88,67 @@ func ReadConfig(path string, quiet bool) (*Config, string) {
 	}
 
 	return &config, configFile
+}
+
+// expandConfigEnvVars expands environment variables in sensitive config fields
+func expandConfigEnvVars(cfg *Config) {
+	// 扩展全局代理配置
+	if cfg.General.Proxy != "" {
+		cfg.General.Proxy = expandEnv(cfg.General.Proxy)
+	}
+
+	// 扩展每个记录的敏感信息
+	for i := range cfg.Records {
+		record := &cfg.Records[i]
+
+		// Cloudflare 配置
+		if record.Cloudflare != nil {
+			if record.Cloudflare.APIToken != "" {
+				record.Cloudflare.APIToken = expandEnv(record.Cloudflare.APIToken)
+			}
+			if record.Cloudflare.ZoneID != "" {
+				record.Cloudflare.ZoneID = expandEnv(record.Cloudflare.ZoneID)
+			}
+		}
+
+		// 阿里云配置
+		if record.Aliyun != nil {
+			if record.Aliyun.AccessKeyID != "" {
+				record.Aliyun.AccessKeyID = expandEnv(record.Aliyun.AccessKeyID)
+			}
+			if record.Aliyun.AccessKeySecret != "" {
+				record.Aliyun.AccessKeySecret = expandEnv(record.Aliyun.AccessKeySecret)
+			}
+		}
+	}
+}
+
+// expandEnv expands environment variables with support for default values
+// Supports: ${VAR}, ${VAR:-default}, ${VAR-default}
+func expandEnv(s string) string {
+	return os.Expand(s, func(key string) string {
+		// 处理默认值语法 ${VAR:-default} 或 ${VAR-default}
+		var defaultValue string
+		var hasDefault bool
+
+		if idx := strings.Index(key, ":-"); idx != -1 {
+			// ${VAR:-default} - 如果 VAR 未设置或为空，使用 default
+			defaultValue = key[idx+2:]
+			key = key[:idx]
+			hasDefault = true
+		} else if idx := strings.Index(key, "-"); idx != -1 {
+			// ${VAR-default} - 如果 VAR 未设置，使用 default
+			defaultValue = key[idx+1:]
+			key = key[:idx]
+			hasDefault = true
+		}
+
+		val := os.Getenv(key)
+		if val == "" && hasDefault {
+			return defaultValue
+		}
+		return val
+	})
 }
 
 // validateConfig validates the configuration
@@ -190,7 +254,39 @@ func ReadLastIP(path string) string {
 
 // WriteLastIP writes the ip to cache file
 func WriteLastIP(path string, ip string) error {
-	return os.WriteFile(path, []byte(ip), 0644)
+	return os.WriteFile(path, []byte(ip), 0600)
+}
+
+// UpdateZoneIDCache saves Cloudflare Zone IDs to a local cache file.
+// This avoids writing the full configuration (which may include secrets).
+func UpdateZoneIDCache(path string, zone string, zoneID string) error {
+	zoneIDs := make(map[string]string)
+	data, err := os.ReadFile(path)
+	if err == nil {
+		_ = json.Unmarshal(data, &zoneIDs)
+	}
+
+	zoneIDs[zone] = zoneID
+
+	out, err := json.MarshalIndent(zoneIDs, "", "    ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0600)
+}
+
+// ReadZoneIDCache reads a Zone ID cache file and returns a map of zone->zoneID.
+// Returns nil map if file doesn't exist or cannot be parsed.
+func ReadZoneIDCache(path string) map[string]string {
+	zoneIDs := make(map[string]string)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if err := json.Unmarshal(data, &zoneIDs); err != nil {
+		return nil
+	}
+	return zoneIDs
 }
 
 // GetRecordProxy returns the proxy URL for a specific record

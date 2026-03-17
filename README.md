@@ -1,7 +1,7 @@
 # goddns - 动态 DNS 客户端
 
 [![Go Version](https://img.shields.io/badge/go-1.21-blue.svg)](https://go.dev)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-BSD_3--Clause-blue.svg)](LICENSE)
 
 **goddns** 是一个用 Go 编写的轻量级动态 DNS (DDNS) 客户端，支持多域名、多服务商、IPv6，具备跨平台能力和丰富的日志输出。
 
@@ -323,16 +323,43 @@ sudo systemctl enable --now goddns.timer
 
 #### 方式一：使用脚本（推荐）
 
+创建运行脚本：
+
 ```bash
 #!/bin/bash
 # /etc/goddns/run-goddns.sh
 
-set -a
-source /etc/goddns/goddns.env
-set +a
+# 设置 PATH 环境变量（cron 环境中可能需要）
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-/usr/local/bin/goddns run -f /etc/goddns/config.json
+# 配置路径
+GODDNS_BIN="/usr/local/bin/goddns"
+GODDNS_CONFIG="/etc/goddns/config.json"
+GODDNS_ENV="/etc/goddns/goddns.env"
+LOG_FILE="/var/log/goddns-cron.log"
+
+# 加载环境变量文件（如果存在）
+if [ -f "$GODDNS_ENV" ]; then
+    set -a
+    source "$GODDNS_ENV"
+    set +a
+fi
+
+# 运行 goddns
+"$GODDNS_BIN" run -f "$GODDNS_CONFIG"
+
+# 记录退出状态
+EXIT_CODE=$?
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "$(date): goddns executed successfully" >> "$LOG_FILE"
+else
+    echo "$(date): goddns failed with exit code $EXIT_CODE" >> "$LOG_FILE"
+fi
+
+exit $EXIT_CODE
 ```
+
+设置权限并配置 crontab：
 
 ```bash
 chmod +x /etc/goddns/run-goddns.sh
@@ -344,10 +371,43 @@ crontab -e
 
 ```bash
 crontab -e
-# 添加：
+# 添加环境变量和任务
 CLOUDFLARE_API_TOKEN="your_token_here"
+ALIYUN_ACCESS_KEY_ID="LTAI1234567890"
+ALIYUN_ACCESS_KEY_SECRET="your_secret_here"
+
+# 每 5 分钟执行一次（推荐）
 */5 * * * * /usr/local/bin/goddns run -f /etc/goddns/config.json >> /var/log/goddns-cron.log 2>&1
+
+# 每小时执行一次
+# 0 * * * * /usr/local/bin/goddns run -f /etc/goddns/config.json >> /var/log/goddns-cron.log 2>&1
+
+# 每天执行一次
+# 0 0 * * * /usr/local/bin/goddns run -f /etc/goddns/config.json >> /var/log/goddns-cron.log 2>&1
 ```
+
+#### Crontab 时间格式说明
+
+```
+# ┌───────────── 分钟 (0 - 59)
+# │ ┌───────────── 小时 (0 - 23)
+# │ │ ┌───────────── 日期 (1 - 31)
+# │ │ │ ┌───────────── 月份 (1 - 12)
+# │ │ │ │ ┌───────────── 星期几 (0 - 7) (星期日=0 或 7)
+# │ │ │ │ │
+# * * * * * 命令
+```
+
+**常用配置示例：**
+- `*/5 * * * *` - 每 5 分钟
+- `*/10 * * * *` - 每 10 分钟
+- `0 * * * *` - 每小时整点
+- `0 */2 * * *` - 每 2 小时
+- `0 0 * * *` - 每天午夜
+- `0 0 * * 0` - 每周日凌晨
+- `@reboot` - 系统启动时执行
+
+> **注意**：cron 环境与交互式 shell 不同，建议使用绝对路径，并确保环境变量文件权限正确（`chmod 600`）。
 
 ---
 
@@ -431,7 +491,7 @@ goddns/
 
 ## 许可证
 
-MIT License - 详见 [LICENSE](LICENSE) 文件。
+采用 **BSD 3-Clause License** - 详见 [LICENSE](LICENSE) 文件。
 
 ---
 

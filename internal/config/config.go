@@ -78,12 +78,18 @@ func ReadConfig(path string, quiet bool) (*Config, string) {
 		return nil, ""
 	}
 
+	// 验证配置（在扩展环境变量之前，检查是否使用明文密钥）
+	if err := validateConfig(&config); err != nil {
+		log.Error("Invalid config: %v", err)
+		return nil, ""
+	}
+
 	// 扩展环境变量
 	expandConfigEnvVars(&config)
 
-	// 验证配置
-	if err := validateConfig(&config); err != nil {
-		log.Error("Invalid config: %v", err)
+	// 再次验证扩展后的配置（检查环境变量是否为空）
+	if err := validateConfigExpanded(&config); err != nil {
+		log.Error("Invalid config after environment variable expansion: %v", err)
 		return nil, ""
 	}
 
@@ -151,7 +157,30 @@ func expandEnv(s string) string {
 	})
 }
 
-// validateConfig validates the configuration
+// isEnvVarReference checks if a string looks like an environment variable reference ${...}
+func isEnvVarReference(s string) bool {
+	if len(s) < 4 { // Minimum: ${X}
+		return false
+	}
+	if !strings.HasPrefix(s, "${") || !strings.HasSuffix(s, "}") {
+		return false
+	}
+	return true
+}
+
+// validateNoPlaintextSecret validates that sensitive values are not stored in plaintext
+func validateNoPlaintextSecret(value, fieldName string) error {
+	if value == "" {
+		return fmt.Errorf("%s is empty", fieldName)
+	}
+	if !isEnvVarReference(value) {
+		return fmt.Errorf("%s must use environment variable reference (e.g., ${VAR_NAME}), plaintext secrets are not allowed for security reasons", fieldName)
+	}
+	return nil
+}
+
+// validateConfig validates the configuration (before env expansion)
+// This checks for plaintext secrets and basic configuration validity
 func validateConfig(cfg *Config) error {
 	if len(cfg.Records) == 0 {
 		return fmt.Errorf("at least one record must be configured")
@@ -188,21 +217,54 @@ func validateConfig(cfg *Config) error {
 			return fmt.Errorf("record[%d]: use_proxy is true but no global proxy configured", i)
 		}
 
-		// 验证凭证
+		// 验证凭证（检查明文密钥）
 		switch record.Provider {
 		case "cloudflare":
-			if record.Cloudflare == nil || record.Cloudflare.APIToken == "" {
-				return fmt.Errorf("record[%d]: cloudflare.api_token is required", i)
+			if record.Cloudflare == nil {
+				return fmt.Errorf("record[%d]: cloudflare configuration is missing", i)
+			}
+			// Security check: api_token must use environment variable reference
+			if err := validateNoPlaintextSecret(record.Cloudflare.APIToken, fmt.Sprintf("record[%d].cloudflare.api_token", i)); err != nil {
+				return err
 			}
 		case "aliyun":
-			if record.Aliyun == nil || record.Aliyun.AccessKeyID == "" || record.Aliyun.AccessKeySecret == "" {
-				return fmt.Errorf("record[%d]: aliyun access_key_id and access_key_secret are required", i)
+			if record.Aliyun == nil {
+				return fmt.Errorf("record[%d]: aliyun configuration is missing", i)
+			}
+			// Security check: access_key_id must use environment variable reference
+			if err := validateNoPlaintextSecret(record.Aliyun.AccessKeyID, fmt.Sprintf("record[%d].aliyun.access_key_id", i)); err != nil {
+				return err
+			}
+			// Security check: access_key_secret must use environment variable reference
+			if err := validateNoPlaintextSecret(record.Aliyun.AccessKeySecret, fmt.Sprintf("record[%d].aliyun.access_key_secret", i)); err != nil {
+				return err
 			}
 		default:
 			return fmt.Errorf("record[%d]: unsupported provider '%s'", i, record.Provider)
 		}
 	}
 
+	return nil
+}
+
+// validateConfigExpanded validates the configuration after env expansion
+// This checks that environment variables were set correctly
+func validateConfigExpanded(cfg *Config) error {
+	for i, record := range cfg.Records {
+		switch record.Provider {
+		case "cloudflare":
+			if record.Cloudflare.APIToken == "" {
+				return fmt.Errorf("record[%d]: cloudflare.api_token environment variable is not set or empty", i)
+			}
+		case "aliyun":
+			if record.Aliyun.AccessKeyID == "" {
+				return fmt.Errorf("record[%d]: aliyun.access_key_id environment variable is not set or empty", i)
+			}
+			if record.Aliyun.AccessKeySecret == "" {
+				return fmt.Errorf("record[%d]: aliyun.access_key_secret environment variable is not set or empty", i)
+			}
+		}
+	}
 	return nil
 }
 
